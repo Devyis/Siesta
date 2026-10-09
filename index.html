@@ -66,6 +66,14 @@ h1{font-size:2.1rem} h2{font-size:1.5rem}
 .result{text-align:center;padding:30px 10px}
 .result .score{font-family:Fraunces,serif;font-size:3.4rem;font-weight:700}
 
+/* login y usuario */
+.authbox{display:flex;flex-direction:column;gap:12px;max-width:380px}
+.inp{border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:12px;padding:13px 14px;font:inherit;font-size:1rem}
+.inp:focus{border-color:var(--accent);outline:none}
+.authbox .btn,.authbox .btn.ghost{margin:0;width:100%}
+.userbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px;color:var(--muted);font-size:.9rem}
+.userbar .back{margin-left:auto}
+.syncdot{font-size:.85rem}
 /* srs */
 .tile{position:relative}
 .badge{position:absolute;top:12px;right:12px;background:var(--bad);color:#fff;border-radius:999px;min-width:26px;height:26px;padding:0 8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700}
@@ -91,6 +99,7 @@ h1{font-size:2.1rem} h2{font-size:1.5rem}
 <body>
 <div class="wrap" id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
 /* =====================================================================
    DATOS  —  aquí agregas contenido nuevo
@@ -162,13 +171,59 @@ const DATA = {
    Cada palabra guarda: ease (facilidad), interval (días), reps, lapses, due.
    · Acierto a la primera:  1 día → 3 días → intervalo × ease
    · Fallo (o ver la respuesta): vuelve en 10 min, baja la facilidad
-   El progreso se guarda en localStorage de tu navegador.
+   El progreso se guarda en Supabase (tabla siesta_srs_cards) por usuario; localStorage solo es caché.
    ===================================================================== */
 const DECK_SIZE = 10, SESSION_MAX = 20;
-const KEY = "flashcards_srs_v1", DAY = 864e5, MIN = 6e4;
-let SRS = loadSRS();
-function loadSRS(){ try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e){ return {}; } }
-function saveSRS(){ try { localStorage.setItem(KEY, JSON.stringify(SRS)); } catch(e){} }
+const KEY_OLD = "flashcards_srs_v1";          // progreso local de la versión anterior (se migra)
+const DAY = 864e5, MIN = 6e4;
+
+/* --- Supabase (proyecto mis-cursos, tabla siesta_srs_cards) --- */
+const SUPABASE_URL = "https://ebtehnbffwobpdnmftod.supabase.co";
+const SUPABASE_KEY = "sb_publishable_N60b6zwvsPG66AY3cv46Ag_GRPl-LUD";   // clave pública: la seguridad la da RLS
+const TABLE = "siesta_srs_cards";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let USER = null;        // usuario con sesión
+let SRS = {};           // progreso en memoria: { cardId: {ease, interval, reps, lapses, due} }
+let dirty = {};         // cambios pendientes de subir: { cardId: versión }
+let ver = 0, syncState = "ok", flushTimer = null, NOTICE = "";
+
+const toRow = (id, c) => ({ user_id: USER.id, card_id: id, ease: c.ease, interval_days: c.interval,
+  reps: c.reps, lapses: c.lapses, due: new Date(c.due).toISOString(), updated_at: new Date().toISOString() });
+const fromRow = r => ({ ease: r.ease, interval: r.interval_days, reps: r.reps, lapses: r.lapses, due: Date.parse(r.due) });
+
+function cacheKey(){ return "siesta_cache_" + USER.id; }
+function saveSRS(){ try { localStorage.setItem(cacheKey(), JSON.stringify({ srs:SRS, dirty })); } catch(e){} }
+function syncText(){ return syncState === "ok" ? "✓ Sincronizado" : syncState === "pending" ? "Sincronizando…" : "⚠ Sin conexión: se subirá luego"; }
+function updateSync(){ document.querySelectorAll(".syncdot").forEach(el => el.textContent = syncText()); }
+function markDirty(id){ dirty[id] = ++ver; syncState = "pending"; saveSRS(); updateSync(); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400); }
+
+async function flush(){
+  if (!USER) return;
+  const snap = { ...dirty }, ids = Object.keys(snap);
+  if (!ids.length){ syncState = "ok"; updateSync(); return; }
+  try {
+    const { error } = await sb.from(TABLE).upsert(ids.map(id => toRow(id, SRS[id])), { onConflict: "user_id,card_id" });
+    if (error) throw error;
+    ids.forEach(id => { if (dirty[id] === snap[id]) delete dirty[id]; });
+    syncState = Object.keys(dirty).length ? "pending" : "ok";
+  } catch(e){ syncState = "error"; }
+  saveSRS(); updateSync();
+}
+window.addEventListener("online", flush);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+
+async function loadRemote(){
+  const all = {}; let from = 0; const step = 1000;
+  for (;;){
+    const { data, error } = await sb.from(TABLE).select("card_id,ease,interval_days,reps,lapses,due").order("card_id").range(from, from+step-1);
+    if (error) throw error;
+    data.forEach(r => all[r.card_id] = fromRow(r));
+    if (data.length < step) break;
+    from += step;
+  }
+  return all;
+}
 const now = () => Date.now();
 
 function grade(id, ok){
@@ -185,7 +240,7 @@ function grade(id, ok){
     c.due = t + 10*MIN;
   }
   SRS[id] = c;
-  saveSRS();
+  markDirty(id);
 }
 function fmtIn(ms){
   if (ms <= 0) return "ahora";
@@ -251,13 +306,98 @@ function crumbs(parts, backTo){
 }
 function render(){
   app.innerHTML = "";
-  ({ hub, langs, lang, container, video, quiz, deckEnd, summary, srsHome, reviewEnd })[S.view]();
+  ({ loading, login, hub, langs, lang, container, video, quiz, deckEnd, summary, srsHome, reviewEnd })[S.view]();
+}
+
+/* ---------- Carga y login ---------- */
+function loading(){ put(h("p", {class:"sub"}, "Cargando…")); }
+
+const AUTH_ERR = {
+  "Invalid login credentials": "Correo o contraseña incorrectos.",
+  "User already registered": "Ese correo ya tiene cuenta. Entra con tu contraseña.",
+  "Email not confirmed": "Confirma tu correo antes de entrar (revisa tu bandeja).",
+  "Password should be at least 6 characters.": "La contraseña debe tener al menos 6 caracteres."
+};
+function login(){
+  let mode = "in";
+  const msg = h("div", {class:"status", role:"status"});
+  const email = h("input", {class:"inp", type:"email", placeholder:"Correo", autocomplete:"email", required:true});
+  const pass = h("input", {class:"inp", type:"password", placeholder:"Contraseña (mín. 6 caracteres)", autocomplete:"current-password", required:true});
+  const btn = h("button", {class:"btn", type:"submit"}, "Entrar");
+  const toggle = h("button", {class:"btn ghost", type:"button"}, "Crear cuenta nueva");
+  const title = h("h2", {}, "Entrar");
+  function show(t, cls){ msg.textContent = t; msg.className = "status " + (cls||""); }
+  function setMode(m){
+    mode = m;
+    title.textContent = m === "in" ? "Entrar" : "Crear cuenta";
+    btn.textContent = m === "in" ? "Entrar" : "Crear cuenta";
+    toggle.textContent = m === "in" ? "Crear cuenta nueva" : "Ya tengo cuenta";
+    pass.setAttribute("autocomplete", m === "in" ? "current-password" : "new-password");
+  }
+  toggle.addEventListener("click", () => { setMode(mode === "in" ? "up" : "in"); show(""); });
+  const form = h("form", {class:"authbox", onsubmit: async e => {
+    e.preventDefault();
+    const em = email.value.trim(), pw = pass.value;
+    if (!em || pw.length < 6){ show("Escribe tu correo y una contraseña de al menos 6 caracteres.", "bad"); return; }
+    btn.disabled = true; show("Un momento…");
+    let res;
+    try {
+      res = mode === "in" ? await sb.auth.signInWithPassword({ email:em, password:pw })
+                          : await sb.auth.signUp({ email:em, password:pw });
+    } catch(err){ res = { error:{ message:"No hay conexión. Intenta de nuevo." } }; }
+    btn.disabled = false;
+    if (res.error){ show(AUTH_ERR[res.error.message] || res.error.message, "bad"); return; }
+    if (!res.data.session){ show("Cuenta creada. Revisa tu correo para confirmarla y luego entra.", "ok"); setMode("in"); return; }
+    USER = res.data.session.user;
+    enter();
+  }}, title, email, pass, btn, toggle, msg);
+  put(
+    h("h1", {}, "Siesta · Flashcards"),
+    h("p", {class:"sub"}, "Entra para guardar tu progreso y verlo en cualquier dispositivo."),
+    form
+  );
+}
+
+/* Tras iniciar sesión: baja el progreso, migra el local y entra al hub */
+async function enter(){
+  go({view:"loading"});
+  let cache = {};
+  try { cache = JSON.parse(localStorage.getItem(cacheKey())) || {}; } catch(e){}
+  try {
+    SRS = await loadRemote(); syncState = "ok";
+    dirty = cache.dirty || {};
+    Object.keys(dirty).forEach(id => { if (cache.srs && cache.srs[id]) SRS[id] = cache.srs[id]; else delete dirty[id]; });
+  } catch(e){
+    SRS = cache.srs || {}; dirty = cache.dirty || {}; syncState = "error";
+  }
+  // migrar progreso de la versión sin cuenta
+  try {
+    const old = JSON.parse(localStorage.getItem(KEY_OLD));
+    if (old && typeof old === "object"){
+      let n = 0;
+      for (const id in old){ if (!SRS[id]){ SRS[id] = old[id]; dirty[id] = ++ver; n++; } }
+      localStorage.removeItem(KEY_OLD);
+      if (n) NOTICE = "Se subieron "+n+" palabras de tu progreso anterior a tu cuenta.";
+    }
+  } catch(e){}
+  saveSRS();
+  if (Object.keys(dirty).length){ syncState = "pending"; flush(); }
+  go({view:"hub"});
+}
+async function logout(){
+  await flush();
+  await sb.auth.signOut();          // dispara SIGNED_OUT → pantalla de login
 }
 
 /* ---------- Hub ---------- */
 function hub(){
   const st = stats();
   put(
+    h("div", {class:"userbar"},
+      h("span", {}, USER ? USER.email : ""),
+      h("span", {class:"syncdot"}, syncText()),
+      h("button", {class:"back", onclick:logout}, "Cerrar sesión")),
+    NOTICE ? h("div", {class:"srsbar"}, NOTICE) : null,
     h("h1", {}, "Hub de estudio"),
     h("p", {class:"sub"}, "Elige una sección."),
     h("div", {class:"grid"},
@@ -269,6 +409,7 @@ function hub(){
         st.due ? h("span", {class:"badge"}, st.due) : null)
     )
   );
+  NOTICE = "";
 }
 
 /* ---------- Idiomas ---------- */
@@ -519,8 +660,11 @@ function srsHome(){
         due.length ? h("button", {class:"btn small", onclick:()=>startReview(due.slice(0,SESSION_MAX), lk, {view:"srsHome"})}, "Repasar") : null);
     }),
     st.studied === 0 ? h("div", {class:"empty"}, "Aún no hay palabras en el SRS. Completa un mazo y aparecerán aquí.") : null,
-    h("button", {class:"btn ghost danger", onclick:()=>{
-      if (confirm("¿Borrar todo el progreso del SRS? No se puede deshacer.")){ SRS = {}; saveSRS(); render(); }
+    h("button", {class:"btn ghost danger", onclick: async () => {
+      if (!confirm("¿Borrar todo tu progreso del SRS? No se puede deshacer.")) return;
+      const { error } = await sb.from(TABLE).delete().eq("user_id", USER.id);
+      if (error){ alert("No se pudo borrar: " + error.message); return; }
+      SRS = {}; dirty = {}; saveSRS(); render();
     }}, "Reiniciar progreso")
   );
 }
@@ -539,7 +683,18 @@ function reviewEnd(){
   );
 }
 
-render();
+/* ---------- Arranque ---------- */
+(async () => {
+  go({view:"loading"});
+  try {
+    const { data } = await sb.auth.getSession();
+    if (data.session){ USER = data.session.user; await enter(); }
+    else go({view:"login"});
+  } catch(e){ go({view:"login"}); }
+  sb.auth.onAuthStateChange(ev => {
+    if (ev === "SIGNED_OUT"){ USER = null; SRS = {}; dirty = {}; go({view:"login"}); }
+  });
+})();
 </script>
 </body>
 </html>
