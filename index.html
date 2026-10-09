@@ -74,6 +74,12 @@ h1{font-size:2.1rem} h2{font-size:1.5rem}
 .userbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px;color:var(--muted);font-size:.9rem}
 .userbar .back{margin-left:auto}
 .syncdot{font-size:.85rem}
+/* % de mazo */
+.pwrap{width:100%;margin-top:6px}
+.pbar{height:6px;background:var(--line);border-radius:6px;overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--accent)}
+.pbar.full i{background:var(--ok)}
+.ptxt{font-size:.85rem;font-weight:700;margin-top:3px}
 /* srs */
 .tile{position:relative}
 .badge{position:absolute;top:12px;right:12px;background:var(--bad);color:#fff;border-radius:999px;min-width:26px;height:26px;padding:0 8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700}
@@ -180,12 +186,13 @@ const DAY = 864e5, MIN = 6e4;
 /* --- Supabase (proyecto mis-cursos, tabla siesta_srs_cards) --- */
 const SUPABASE_URL = "https://ebtehnbffwobpdnmftod.supabase.co";
 const SUPABASE_KEY = "sb_publishable_N60b6zwvsPG66AY3cv46Ag_GRPl-LUD";   // clave pública: la seguridad la da RLS
-const TABLE = "siesta_srs_cards";
+const TABLE = "siesta_srs_cards", DECK_TABLE = "siesta_deck_results";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let USER = null;        // usuario con sesión
 let SRS = {};           // progreso en memoria: { cardId: {ease, interval, reps, lapses, due} }
 let dirty = {};         // cambios pendientes de subir: { cardId: versión }
+let DECKS = {}, dirtyDecks = {};   // último resultado por mazo: { deckId: {score,total} }
 let ver = 0, syncState = "ok", flushTimer = null, NOTICE = "";
 
 const toRow = (id, c) => ({ user_id: USER.id, card_id: id, ease: c.ease, interval_days: c.interval,
@@ -193,26 +200,46 @@ const toRow = (id, c) => ({ user_id: USER.id, card_id: id, ease: c.ease, interva
 const fromRow = r => ({ ease: r.ease, interval: r.interval_days, reps: r.reps, lapses: r.lapses, due: Date.parse(r.due) });
 
 function cacheKey(){ return "siesta_cache_" + USER.id; }
-function saveSRS(){ try { localStorage.setItem(cacheKey(), JSON.stringify({ srs:SRS, dirty })); } catch(e){} }
+function saveSRS(){ try { localStorage.setItem(cacheKey(), JSON.stringify({ srs:SRS, dirty, decks:DECKS, dirtyDecks })); } catch(e){} }
+const deckId = (lang, vid, di) => lang + "|" + vid + "|" + di;
 function syncText(){ return syncState === "ok" ? "✓ Sincronizado" : syncState === "pending" ? "Sincronizando…" : "⚠ Sin conexión: se subirá luego"; }
 function updateSync(){ document.querySelectorAll(".syncdot").forEach(el => el.textContent = syncText()); }
 function markDirty(id){ dirty[id] = ++ver; syncState = "pending"; saveSRS(); updateSync(); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400); }
 
+function recordDeck(id, score, total){
+  DECKS[id] = { score, total }; dirtyDecks[id] = ++ver; syncState = "pending";
+  saveSRS(); updateSync(); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400);
+}
 async function flush(){
   if (!USER) return;
   const snap = { ...dirty }, ids = Object.keys(snap);
-  if (!ids.length){ syncState = "ok"; updateSync(); return; }
+  const dsnap = { ...dirtyDecks }, dids = Object.keys(dsnap);
+  if (!ids.length && !dids.length){ syncState = "ok"; updateSync(); return; }
   try {
-    const { error } = await sb.from(TABLE).upsert(ids.map(id => toRow(id, SRS[id])), { onConflict: "user_id,card_id" });
-    if (error) throw error;
-    ids.forEach(id => { if (dirty[id] === snap[id]) delete dirty[id]; });
-    syncState = Object.keys(dirty).length ? "pending" : "ok";
+    if (ids.length){
+      const { error } = await sb.from(TABLE).upsert(ids.map(id => toRow(id, SRS[id])), { onConflict: "user_id,card_id" });
+      if (error) throw error;
+      ids.forEach(id => { if (dirty[id] === snap[id]) delete dirty[id]; });
+    }
+    if (dids.length){
+      const rows = dids.map(id => ({ user_id: USER.id, deck_id: id, score: DECKS[id].score, total: DECKS[id].total, updated_at: new Date().toISOString() }));
+      const { error } = await sb.from(DECK_TABLE).upsert(rows, { onConflict: "user_id,deck_id" });
+      if (error) throw error;
+      dids.forEach(id => { if (dirtyDecks[id] === dsnap[id]) delete dirtyDecks[id]; });
+    }
+    syncState = (Object.keys(dirty).length || Object.keys(dirtyDecks).length) ? "pending" : "ok";
   } catch(e){ syncState = "error"; }
   saveSRS(); updateSync();
 }
 window.addEventListener("online", flush);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
 
+async function loadDecks(){
+  const { data, error } = await sb.from(DECK_TABLE).select("deck_id,score,total");
+  if (error) throw error;
+  const o = {}; data.forEach(r => o[r.deck_id] = { score: r.score, total: r.total });
+  return o;
+}
 async function loadRemote(){
   const all = {}; let from = 0; const step = 1000;
   for (;;){
@@ -263,15 +290,23 @@ function allCards(langKey){
 function isDue(c){ const s = SRS[c.id]; return !!s && s.due <= now(); }
 function dueCards(list){ return list.filter(isDue).sort((a,b) => SRS[a.id].due - SRS[b.id].due); }
 function stats(langKey){
-  const t = now(); let studied=0, due=0, mature=0, next=Infinity;
+  const t = now(); let studied=0, due=0, mature=0, next=Infinity, waiting=0, nextWait=Infinity;
   const cards = allCards(langKey);
   cards.forEach(c => {
     const s = SRS[c.id]; if (!s) return;
     studied++;
-    if (s.due <= t) due++; else next = Math.min(next, s.due);
+    if (s.due <= t) due++;
+    else {
+      next = Math.min(next, s.due);
+      if (s.interval === 0){ waiting++; nextWait = Math.min(nextWait, s.due); }   // falladas que aún no vencen
+    }
     if (s.interval >= 21) mature++;
   });
-  return { total:cards.length, studied, due, mature, next };
+  return { total:cards.length, studied, due, mature, next, waiting, nextWait };
+}
+function waitTxt(st){
+  if (!st.waiting) return "";
+  return st.waiting + " en espera, " + (st.waiting > 1 ? "la primera " : "") + "vuelve en " + fmtIn(st.nextWait - now());
 }
 
 /* =====================================================================
@@ -384,8 +419,11 @@ async function enter(){
     SRS = await loadRemote(); syncState = "ok";
     dirty = cache.dirty || {};
     Object.keys(dirty).forEach(id => { if (cache.srs && cache.srs[id]) SRS[id] = cache.srs[id]; else delete dirty[id]; });
+    DECKS = await loadDecks();
+    dirtyDecks = cache.dirtyDecks || {};
+    Object.keys(dirtyDecks).forEach(id => { if (cache.decks && cache.decks[id]) DECKS[id] = cache.decks[id]; else delete dirtyDecks[id]; });
   } catch(e){
-    SRS = cache.srs || {}; dirty = cache.dirty || {}; syncState = "error";
+    SRS = cache.srs || {}; dirty = cache.dirty || {}; DECKS = cache.decks || {}; dirtyDecks = cache.dirtyDecks || {}; syncState = "error";
   }
   // migrar progreso de la versión sin cuenta
   try {
@@ -398,7 +436,7 @@ async function enter(){
     }
   } catch(e){}
   saveSRS();
-  if (Object.keys(dirty).length){ syncState = "pending"; flush(); }
+  if (Object.keys(dirty).length || Object.keys(dirtyDecks).length){ syncState = "pending"; flush(); }
   go({view:"hub"});
 }
 async function logout(){
@@ -422,7 +460,7 @@ function hub(){
         h("div", {class:"big"}, "🗂️"), h("div", {class:"name"}, "Flashcards idiomas")),
       h("button", {class:"tile", onclick:()=>go({view:"srsHome"})},
         h("div", {class:"big"}, "🔁"), h("div", {class:"name"}, "Repaso SRS"),
-        h("div", {class:"meta"}, st.due ? st.due+" pendiente(s)" : "Al día"),
+        h("div", {class:"meta"}, st.due ? st.due+" pendiente(s)" : st.waiting ? waitTxt(st) : "Al día"),
         st.due ? h("span", {class:"badge"}, st.due) : null)
     )
   );
@@ -502,10 +540,17 @@ function video(){
     decks.length
       ? h("div", {class:"grid"}, decks.map((d,i) => {
           const n = d.filter(c => SRS[c.id]).length;
+          const r = DECKS[deckId(S.lang, V.id, i)];
+          const pct = r ? Math.round(r.score / r.total * 100) : null;
           return h("button", {class:"tile "+L.cls, onclick:()=>startDeck(i)},
             h("div", {class:"tag"}, "Mazo "+(i+1)),
             h("div", {class:"name"}, d[0].w+" …"),
-            h("div", {class:"meta"}, d.length+" palabras"+(n ? " · "+n+" vistas" : "")));
+            h("div", {class:"meta"}, d.length+" palabras"+(n ? " · "+n+" vistas" : "")),
+            pct !== null
+              ? h("div", {class:"pwrap", title:"Último intento: "+r.score+" de "+r.total},
+                  h("div", {class:"pbar"+(pct === 100 ? " full" : "")}, h("i", {style:"width:"+pct+"%"})),
+                  h("div", {class:"ptxt"}, pct+"%"))
+              : null);
         }))
       : h("div", {class:"empty"}, "Este video todavía no tiene vocabulario.")
   );
@@ -578,7 +623,10 @@ function quiz(){
     if (se.mode === "review" && se.res === "bad") se.queue.push(c);   // en repaso, la fallada se repite
     else se.done++;
     se.answered = false; se.picked = null; se.peeked = false; se.res = null; se.msg = ""; se.options = null;
-    if (!se.queue.length) S = { ...S, view: se.mode === "deck" ? "deckEnd" : "reviewEnd" };
+    if (!se.queue.length){
+      if (se.mode === "deck") recordDeck(deckId(S.lang, vref().V.id, S.di), se.score, se.total);   // el % se queda con el último intento
+      S = { ...S, view: se.mode === "deck" ? "deckEnd" : "reviewEnd" };
+    }
     render();
   }
 
@@ -656,7 +704,10 @@ function summary(){
 }
 
 /* ---------- Repaso SRS ---------- */
+let tickTimer = null;
 function srsHome(){
+  clearTimeout(tickTimer);
+  tickTimer = setTimeout(() => { if (S.view === "srsHome") render(); }, 30000);   // actualiza "en espera" sin recargar
   const st = stats();
   const nextTxt = st.next === Infinity ? "—" : "en " + fmtIn(st.next - now());
   put(
@@ -665,6 +716,7 @@ function srsHome(){
     h("p", {class:"sub"}, "Palabras que ya estudiaste y toca repasar. Sesiones de hasta "+SESSION_MAX+"."),
     h("div", {class:"stats"},
       h("div", {class:"stat"}, h("b", {}, st.due), h("span", {}, "pendientes")),
+      h("div", {class:"stat"}, h("b", {}, st.waiting), h("span", {}, st.waiting ? "en espera · vuelve en "+fmtIn(st.nextWait-now()) : "en espera")),
       h("div", {class:"stat"}, h("b", {}, st.studied+"/"+st.total), h("span", {}, "estudiadas")),
       h("div", {class:"stat"}, h("b", {}, st.mature), h("span", {}, "dominadas (≥21 días)")),
       h("div", {class:"stat"}, h("b", {}, nextTxt), h("span", {}, "próxima pendiente"))),
@@ -673,15 +725,17 @@ function srsHome(){
       if (!ls.total) return null;
       const due = dueCards(allCards(lk));
       return h("div", {class:"srsbar"},
-        h("span", {}, h("b", {}, L.name), ": ", due.length ? due.length+" pendiente(s)" : "nada pendiente ("+ls.studied+" estudiadas)"),
+        h("span", {}, h("b", {}, L.name), ": ", (due.length ? due.length+" pendiente(s)" : "nada pendiente")+" · "+ls.studied+" estudiadas"+(ls.waiting ? " · "+waitTxt(ls) : "")),
         due.length ? h("button", {class:"btn small", onclick:()=>startReview(due.slice(0,SESSION_MAX), lk, {view:"srsHome"})}, "Repasar") : null);
     }),
     st.studied === 0 ? h("div", {class:"empty"}, "Aún no hay palabras en el SRS. Completa un mazo y aparecerán aquí.") : null,
     h("button", {class:"btn ghost danger", onclick: async () => {
       if (!confirm("¿Borrar todo tu progreso del SRS? No se puede deshacer.")) return;
-      const { error } = await sb.from(TABLE).delete().eq("user_id", USER.id);
+      const r1 = await sb.from(TABLE).delete().eq("user_id", USER.id);
+      const r2 = await sb.from(DECK_TABLE).delete().eq("user_id", USER.id);
+      const error = r1.error || r2.error;
       if (error){ alert("No se pudo borrar: " + error.message); return; }
-      SRS = {}; dirty = {}; saveSRS(); render();
+      SRS = {}; dirty = {}; DECKS = {}; dirtyDecks = {}; saveSRS(); render();
     }}, "Reiniciar progreso")
   );
 }
@@ -709,7 +763,7 @@ function reviewEnd(){
     else go({view:"login"});
   } catch(e){ go({view:"login"}); }
   sb.auth.onAuthStateChange(ev => {
-    if (ev === "SIGNED_OUT"){ USER = null; SRS = {}; dirty = {}; go({view:"login"}); }
+    if (ev === "SIGNED_OUT"){ USER = null; SRS = {}; dirty = {}; DECKS = {}; dirtyDecks = {}; go({view:"login"}); }
   });
 })();
 </script>
