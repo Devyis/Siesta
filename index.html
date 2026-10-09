@@ -354,7 +354,7 @@ function summary(){
     crumbs([V.id,"Resumen"], {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}),
     h("h2", {}, "Resumen · "+V.id),
     h("p", {class:"sub"}, "Lee cada línea en japonés. Toca para ver la traducción."),
-    V.lines.map(l => {
+    ...V.lines.map(l => {
       const box = h("div", {class:"line", role:"button", tabindex:"0"},
         h("div", {class:"t"}, "["+l.t+"]"),
         h("div", {class:"jp", lang:"ja"}, l.jp));
