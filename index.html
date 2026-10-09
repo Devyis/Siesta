@@ -356,8 +356,15 @@ function login(){
                           : await sb.auth.signUp({ email:em, password:pw });
     } catch(err){ res = { error:{ message:"No hay conexión. Intenta de nuevo." } }; }
     btn.disabled = false;
-    if (res.error){ show(AUTH_ERR[res.error.message] || res.error.message, "bad"); return; }
-    if (!res.data.session){ show("La cuenta se creó, pero el proyecto exige confirmar correo. Desactiva «Confirm email» en Supabase (Authentication → Providers → Email).", "bad"); setMode("in"); return; }
+    if (res.error){
+      const m = res.error.message || "";
+      show(/rate limit/i.test(m) ? "Supabase limitó los intentos de registro. Espera unos minutos o desactiva «Confirm email» en Authentication → Providers → Email." : (AUTH_ERR[m] || m), "bad");
+      return;
+    }
+    if (mode === "up" && !res.data.session){          // cuenta creada: entrar directamente
+      try { res = await sb.auth.signInWithPassword({ email:em, password:pw }); } catch(err){}
+    }
+    if (!res.data || !res.data.session){ show("La cuenta se creó, pero el proyecto exige confirmar correo. Desactiva «Confirm email» en Supabase (Authentication → Providers → Email).", "bad"); setMode("in"); return; }
     USER = res.data.session.user;
     enter();
   }}, title, email, pass, pass2, btn, toggle, msg);
