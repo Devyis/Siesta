@@ -313,16 +313,22 @@ function render(){
 function loading(){ put(h("p", {class:"sub"}, "Cargando…")); }
 
 const AUTH_ERR = {
-  "Invalid login credentials": "Correo o contraseña incorrectos.",
-  "User already registered": "Ese correo ya tiene cuenta. Entra con tu contraseña.",
-  "Email not confirmed": "Confirma tu correo antes de entrar (revisa tu bandeja).",
+  "Invalid login credentials": "Usuario o contraseña incorrectos.",
+  "User already registered": "Ese usuario ya existe. Prueba otro o entra con tu contraseña.",
+  "Email not confirmed": "El proyecto exige confirmar el correo. Desactiva «Confirm email» en Supabase (Authentication → Providers → Email).",
   "Password should be at least 6 characters.": "La contraseña debe tener al menos 6 caracteres."
 };
+const EMAIL_SUFFIX = ".siesta@gmail.com";        // el usuario se guarda como correo interno (nunca se envía nada)
+const toEmail = u => u + EMAIL_SUFFIX;
+const toUsername = e => (e || "").replace(EMAIL_SUFFIX, "");
+
 function login(){
   let mode = "in";
   const msg = h("div", {class:"status", role:"status"});
-  const email = h("input", {class:"inp", type:"email", placeholder:"Correo", autocomplete:"email", required:true});
+  const email = h("input", {class:"inp", type:"text", placeholder:"Usuario", autocomplete:"username", autocapitalize:"none", spellcheck:"false", required:true});
   const pass = h("input", {class:"inp", type:"password", placeholder:"Contraseña (mín. 6 caracteres)", autocomplete:"current-password", required:true});
+  const pass2 = h("input", {class:"inp", type:"password", placeholder:"Repite la contraseña", autocomplete:"new-password"});
+  pass2.hidden = true;
   const btn = h("button", {class:"btn", type:"submit"}, "Entrar");
   const toggle = h("button", {class:"btn ghost", type:"button"}, "Crear cuenta nueva");
   const title = h("h2", {}, "Entrar");
@@ -333,12 +339,16 @@ function login(){
     btn.textContent = m === "in" ? "Entrar" : "Crear cuenta";
     toggle.textContent = m === "in" ? "Crear cuenta nueva" : "Ya tengo cuenta";
     pass.setAttribute("autocomplete", m === "in" ? "current-password" : "new-password");
+    pass2.hidden = m === "in"; pass2.value = "";
   }
   toggle.addEventListener("click", () => { setMode(mode === "in" ? "up" : "in"); show(""); });
   const form = h("form", {class:"authbox", onsubmit: async e => {
     e.preventDefault();
-    const em = email.value.trim(), pw = pass.value;
-    if (!em || pw.length < 6){ show("Escribe tu correo y una contraseña de al menos 6 caracteres.", "bad"); return; }
+    const user = email.value.trim().toLowerCase(), pw = pass.value;
+    if (!/^[a-z0-9._-]{3,20}$/.test(user)){ show("Usuario de 3 a 20 caracteres: letras, números, punto, guion o guion bajo.", "bad"); return; }
+    if (pw.length < 6){ show("La contraseña debe tener al menos 6 caracteres.", "bad"); return; }
+    if (mode === "up" && pw !== pass2.value){ show("Las contraseñas no coinciden.", "bad"); return; }
+    const em = toEmail(user);
     btn.disabled = true; show("Un momento…");
     let res;
     try {
@@ -347,13 +357,13 @@ function login(){
     } catch(err){ res = { error:{ message:"No hay conexión. Intenta de nuevo." } }; }
     btn.disabled = false;
     if (res.error){ show(AUTH_ERR[res.error.message] || res.error.message, "bad"); return; }
-    if (!res.data.session){ show("Cuenta creada. Revisa tu correo para confirmarla y luego entra.", "ok"); setMode("in"); return; }
+    if (!res.data.session){ show("La cuenta se creó, pero el proyecto exige confirmar correo. Desactiva «Confirm email» en Supabase (Authentication → Providers → Email).", "bad"); setMode("in"); return; }
     USER = res.data.session.user;
     enter();
-  }}, title, email, pass, btn, toggle, msg);
+  }}, title, email, pass, pass2, btn, toggle, msg);
   put(
     h("h1", {}, "Siesta · Flashcards"),
-    h("p", {class:"sub"}, "Entra para guardar tu progreso y verlo en cualquier dispositivo."),
+    h("p", {class:"sub"}, "Entra con tu usuario para guardar tu progreso y verlo en cualquier dispositivo."),
     form
   );
 }
@@ -394,7 +404,7 @@ function hub(){
   const st = stats();
   put(
     h("div", {class:"userbar"},
-      h("span", {}, USER ? USER.email : ""),
+      h("span", {}, USER ? "👤 " + toUsername(USER.email) : ""),
       h("span", {class:"syncdot"}, syncText()),
       h("button", {class:"back", onclick:logout}, "Cerrar sesión")),
     NOTICE ? h("div", {class:"srsbar"}, NOTICE) : null,
