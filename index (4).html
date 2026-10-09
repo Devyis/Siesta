@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flashcards de idiomas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&family=Fraunces:opsz,wght@9..144,500;9..144,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f3f0ea; --ink:#1f2a2e; --muted:#6a7478; --card:#ffffff; --line:#d9d4c9;
+  --accent:#2f5d62; --accent-ink:#ffffff; --ok:#2e7d4f; --ok-bg:#e1f2e8; --bad:#b3392f; --bad-bg:#f8e3e0;
+  --ja:#c4453a; --pt:#2f7a52;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#15191b; --ink:#e9e6df; --muted:#8e989c; --card:#1f2527; --line:#34403f;
+    --accent:#7fb6b0; --accent-ink:#10201f; --ok:#6fcf97; --ok-bg:#1d3326; --bad:#ef8a80; --bad-bg:#3a1f1c;
+    --ja:#e5766b; --pt:#6fc59a;}
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Zen Maru Gothic",system-ui,sans-serif;min-height:100vh;line-height:1.5}
+.wrap{max-width:760px;margin:0 auto;padding:20px 18px 60px}
+h1,h2{font-family:Fraunces,Georgia,serif;font-weight:700;margin:0}
+h1{font-size:2.1rem} h2{font-size:1.5rem}
+.crumbs{display:flex;align-items:center;gap:10px;margin-bottom:26px;color:var(--muted);font-size:.95rem;flex-wrap:wrap}
+.back{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 14px;cursor:pointer;font:inherit}
+.back:hover{border-color:var(--accent)}
+.sub{color:var(--muted);margin:6px 0 24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px}
+.tile{aspect-ratio:1/1;border-radius:18px;border:2px solid var(--line);background:var(--card);cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink);font:inherit;padding:14px;text-align:center}
+.tile:hover{border-color:var(--accent);transform:translateY(-2px)}
+.tile{transition:transform .15s,border-color .15s}
+.tile .big{font-size:3rem;line-height:1}
+.tile .name{font-weight:700;font-size:1.15rem}
+.tile .meta{font-size:.85rem;color:var(--muted)}
+.tile.ja{border-color:var(--ja)} .tile.pt{border-color:var(--pt)}
+.tile.dashed{border-style:dashed;cursor:default;opacity:.7}
+.tile.dashed:hover{transform:none;border-color:var(--line)}
+.tag{font-weight:700;color:var(--accent)}
+.empty{border:2px dashed var(--line);border-radius:14px;padding:26px;text-align:center;color:var(--muted)}
+
+/* quiz */
+.progress{height:6px;background:var(--line);border-radius:6px;overflow:hidden;margin-bottom:8px}
+.progress i{display:block;height:100%;background:var(--accent);transition:width .25s}
+.count{color:var(--muted);font-size:.9rem;margin-bottom:18px;display:flex;justify-content:space-between}
+.qcard{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:34px 20px;text-align:center;margin-bottom:18px}
+.word{font-size:clamp(2.4rem,9vw,3.6rem);font-weight:700;cursor:pointer;display:inline-block;padding:4px 14px;border-radius:12px;word-break:keep-all}
+.word:hover{background:var(--bg)}
+.hint{color:var(--muted);font-size:.85rem;margin-top:6px}
+.reveal{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
+.reveal .romaji{font-size:1.2rem;color:var(--accent);font-weight:700}
+.reveal .es{font-size:1.4rem;margin-top:2px}
+.opts{display:grid;gap:10px}
+.opt{border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:14px;padding:14px 16px;font:inherit;font-size:1.05rem;text-align:left;cursor:pointer}
+.opt:hover:not(:disabled){border-color:var(--accent)}
+.opt:disabled{cursor:default}
+.opt.ok{border-color:var(--ok);background:var(--ok-bg)}
+.opt.bad{border-color:var(--bad);background:var(--bad-bg)}
+.btn{border:0;background:var(--accent);color:var(--accent-ink);border-radius:12px;padding:13px 22px;font:inherit;font-weight:700;font-size:1.05rem;cursor:pointer;margin-top:18px}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);margin-left:8px}
+.status{margin-top:14px;font-weight:700;min-height:1.4em}
+.status.ok{color:var(--ok)} .status.bad{color:var(--bad)}
+.result{text-align:center;padding:30px 10px}
+.result .score{font-family:Fraunces,serif;font-size:3.4rem;font-weight:700}
+
+/* summary */
+.line{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:12px;cursor:pointer}
+.line:hover{border-color:var(--accent)}
+.line .t{font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.line .jp{font-size:1.25rem;margin-top:2px}
+.line .tr{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);color:var(--accent);font-weight:700}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script>
+/* =====================================================================
+   DATOS  —  aquí agregas contenido nuevo
+   Estructura: idioma → contenedores (J1, J2...) → videos (J1.1, J1.2...)
+   Cada video tiene: lines (subtítulos con traducción) y words (vocabulario).
+   Los mazos se arman solos de 10 en 10 con el orden de "words".
+   ===================================================================== */
+const DATA = {
+  ja: {
+    name: "Japonés", native: "日本語", cls: "ja",
+    containers: [
+      {
+        id: "J1", title: "Siesta",
+        videos: [
+          {
+            id: "J1.1", title: "Video 1",
+            lines: [
+              { t: "00:00.000 --> 00:10.000",
+                jp: "分かってるよ。君は私のことを特別に思っていなかったし、 私も君を特別扱いはしなかった。",
+                es: "Lo sé. Tú no me considerabas alguien especial, y yo tampoco te di un trato especial." },
+              { t: "00:10.000 --> 00:26.000",
+                jp: "ただ、君と過ごしたあの目も眩むような3年間は、 私にとって何よりの思い出だよ。",
+                es: "Pero esos tres años deslumbrantes que pasé contigo son, para mí, el mejor de los recuerdos." },
+              { t: "00:26.000 --> 00:30.000",
+                jp: "馬鹿か、君は。",
+                es: "¿Eres tonto o qué?" },
+              { t: "00:32.000 --> 00:39.000",
+                jp: "死人に意地を張ってどうするの? この1年、一人でよく頑張った。",
+                es: "¿De qué sirve obstinarte con una persona muerta? Este último año te esforzaste mucho tú solo." }
+            ],
+            words: [
+              { w: "分かる",   r: "wakaru",          es: "entender; saber" },
+              { w: "君",       r: "kimi",            es: "tú (informal)" },
+              { w: "私",       r: "watashi",         es: "yo" },
+              { w: "特別",     r: "tokubetsu",       es: "especial" },
+              { w: "思う",     r: "omou",            es: "pensar; considerar" },
+              { w: "特別扱い", r: "tokubetsu atsukai", es: "trato especial" },
+              { w: "ただ",     r: "tada",            es: "solo; pero" },
+              { w: "過ごす",   r: "sugosu",          es: "pasar (tiempo)" },
+              { w: "あの",     r: "ano",             es: "aquel / aquella" },
+              { w: "目",       r: "me",              es: "ojo" },
+              { w: "眩む",     r: "kuramu",          es: "deslumbrar; marearse" },
+              { w: "3年間",    r: "san nenkan",      es: "tres años (duración)" },
+              { w: "何より",   r: "nani yori",       es: "más que nada" },
+              { w: "思い出",   r: "omoide",          es: "recuerdo" },
+              { w: "馬鹿",     r: "baka",            es: "tonto" },
+              { w: "死人",     r: "shinin",          es: "persona muerta" },
+              { w: "意地を張る", r: "iji o haru",    es: "ser terco; empecinarse" },
+              { w: "どうする", r: "dou suru",        es: "¿qué hacer?" },
+              { w: "1年",      r: "ichi nen",        es: "un año" },
+              { w: "一人",     r: "hitori",          es: "una persona; solo" },
+              { w: "よく",     r: "yoku",            es: "bien; mucho" },
+              { w: "頑張る",   r: "ganbaru",         es: "esforzarse; dar lo mejor" }
+            ]
+          },
+          { id: "J1.2", title: "Video 2", lines: [], words: [] }
+        ]
+      }
+    ]
+  },
+  pt: {
+    name: "Portugués", native: "Português", cls: "pt",
+    containers: []
+  }
+};
+
+/* =====================================================================
+   APP
+   ===================================================================== */
+const app = document.getElementById("app");
+const DECK_SIZE = 10;
+let timer = null;
+let S = { view: "hub" };   // estado de navegación
+
+function h(tag, attrs, ...kids){
+  const el = document.createElement(tag);
+  for (const k in (attrs||{})){
+    if (k === "class") el.className = attrs[k];
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), attrs[k]);
+    else el.setAttribute(k, attrs[k]);
+  }
+  kids.flat().forEach(c => { if (c != null) el.append(c.nodeType ? c : document.createTextNode(c)); });
+  return el;
+}
+function go(next){ clearTimeout(timer); S = next; render(); window.scrollTo(0,0); }
+function shuffle(a){ a = a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
+function chunk(a,n){ const r=[]; for(let i=0;i<a.length;i+=n) r.push(a.slice(i,i+n)); return r; }
+
+function crumbs(parts, backTo){
+  const bar = h("div", {class:"crumbs"});
+  if (backTo) bar.append(h("button", {class:"back", onclick:()=>go(backTo)}, "← Volver"));
+  bar.append(h("span", {}, parts.join(" / ")));
+  return bar;
+}
+
+function render(){
+  app.innerHTML = "";
+  ({ hub, langs, lang, container, video, quiz, deckEnd, summary })[S.view]();
+}
+
+/* ---------- Hub ---------- */
+function hub(){
+  app.append(
+    h("h1", {}, "Hub de estudio"),
+    h("p", {class:"sub"}, "Elige una sección."),
+    h("div", {class:"grid"},
+      h("button", {class:"tile", onclick:()=>go({view:"langs"})},
+        h("div", {class:"big"}, "🗂️"), h("div", {class:"name"}, "Flashcards idiomas"))
+    )
+  );
+}
+
+/* ---------- Idiomas ---------- */
+function langs(){
+  app.append(
+    crumbs(["Hub","Flashcards idiomas"], {view:"hub"}),
+    h("h2", {}, "Flashcards idiomas"),
+    h("p", {class:"sub"}, "¿Qué idioma estudiamos?"),
+    h("div", {class:"grid"},
+      Object.entries(DATA).map(([key,l]) =>
+        h("button", {class:"tile "+l.cls, onclick:()=>go({view:"lang", lang:key})},
+          h("div", {class:"big"}, l.native.slice(0,2)),
+          h("div", {class:"name"}, l.name),
+          h("div", {class:"meta"}, l.containers.length ? l.containers.length+" contenedor(es)" : "Próximamente")))
+    )
+  );
+}
+
+/* ---------- Contenedores de un idioma (J1, J2...) ---------- */
+function lang(){
+  const L = DATA[S.lang];
+  app.append(
+    crumbs(["Hub","Idiomas",L.name], {view:"langs"}),
+    h("h2", {}, L.name),
+    h("p", {class:"sub"}, "Elige un contenedor."),
+    L.containers.length
+      ? h("div", {class:"grid"}, L.containers.map((c,i) =>
+          h("button", {class:"tile "+L.cls, onclick:()=>go({view:"container", lang:S.lang, ci:i})},
+            h("div", {class:"tag"}, c.id),
+            h("div", {class:"name"}, c.title),
+            h("div", {class:"meta"}, c.videos.length+" video(s)"))))
+      : h("div", {class:"empty"}, "Aún no hay contenido para "+L.name+". Agrégalo en DATA dentro del HTML.")
+  );
+}
+
+/* ---------- Videos de un contenedor (J1.1, J1.2...) ---------- */
+function container(){
+  const L = DATA[S.lang], C = L.containers[S.ci];
+  app.append(
+    crumbs(["Hub",L.name,C.id+" "+C.title], {view:"lang", lang:S.lang}),
+    h("h2", {}, C.id+" · "+C.title),
+    h("p", {class:"sub"}, "Elige un video."),
+    h("div", {class:"grid"}, C.videos.map((v,i) => {
+      const decks = Math.ceil(v.words.length/DECK_SIZE);
+      return h("button", {class:"tile "+L.cls, onclick:()=>go({view:"video", lang:S.lang, ci:S.ci, vi:i})},
+        h("div", {class:"tag"}, v.id),
+        h("div", {class:"name"}, v.title),
+        h("div", {class:"meta"}, v.words.length ? v.words.length+" palabras · "+decks+" mazo(s)" : "Sin vocabulario aún"));
+    }))
+  );
+}
+
+/* ---------- Mazos de un video ---------- */
+function video(){
+  const L = DATA[S.lang], C = L.containers[S.ci], V = C.videos[S.vi];
+  const decks = chunk(V.words, DECK_SIZE);
+  app.append(
+    crumbs(["Hub",L.name,V.id], {view:"container", lang:S.lang, ci:S.ci}),
+    h("h2", {}, V.id+" · "+V.title),
+    h("p", {class:"sub"}, "Mazos de "+DECK_SIZE+" palabras."),
+    decks.length
+      ? h("div", {class:"grid"}, decks.map((d,i) =>
+          h("button", {class:"tile "+L.cls, onclick:()=>startDeck(i)},
+            h("div", {class:"tag"}, "Mazo "+(i+1)),
+            h("div", {class:"name"}, d[0].w+" …"),
+            h("div", {class:"meta"}, d.length+" palabras"))))
+      : h("div", {class:"empty"}, "Este video todavía no tiene vocabulario.")
+  );
+}
+
+/* ---------- Quiz ---------- */
+function startDeck(di){
+  S = { ...S, view:"quiz", di, i:0, score:0, answered:false, picked:null, peeked:false };
+  render();
+}
+function ctx(){
+  const L = DATA[S.lang], V = L.containers[S.ci].videos[S.vi];
+  const decks = chunk(V.words, DECK_SIZE);
+  return { L, V, decks, deck: decks[S.di] };
+}
+
+function quiz(){
+  const { L, V, decks, deck } = ctx();
+  const card = deck[S.i];
+  if (!S.options){
+    const wrong = shuffle(V.words.filter(x => x.es !== card.es)).slice(0,3).map(x=>x.es);
+    S.options = shuffle([card.es, ...wrong]);
+  }
+  const revealed = S.answered || S.peeked;
+  const correct = S.answered && S.picked === card.es;
+
+  const reveal = revealed
+    ? h("div", {class:"reveal"}, h("div", {class:"romaji"}, card.r), h("div", {class:"es"}, card.es))
+    : h("div", {class:"hint"}, "Toca la palabra para ver su traducción");
+
+  const wordEl = h("span", {class:"word", role:"button", tabindex:"0", lang:"ja",
+    onclick: peek, onkeydown:e=>{ if(e.key==="Enter"||e.key===" ") peek(); }}, card.w);
+  function peek(){ if (revealed) return; S.peeked = true; render(); }
+
+  const opts = h("div", {class:"opts"}, S.options.map(o => {
+    let cls = "opt";
+    if (revealed){
+      if (o === card.es) cls += " ok";
+      else if (o === S.picked) cls += " bad";
+    }
+    return h("button", {class:cls, disabled: revealed ? "" : null, onclick:()=>choose(o)}, o);
+  }));
+  if (!revealed) opts.querySelectorAll("button").forEach(b=>b.removeAttribute("disabled"));
+
+  function choose(o){
+    if (revealed) return;
+    S.answered = true; S.picked = o;
+    if (o === card.es){
+      S.score++;
+      render();
+      timer = setTimeout(next, 1100);   // acierto → avanza solo
+    } else render();                    // fallo → avance manual
+  }
+  function next(){
+    clearTimeout(timer);
+    if (S.i + 1 < deck.length) S = { ...S, i:S.i+1, answered:false, picked:null, peeked:false, options:null };
+    else S = { ...S, view:"deckEnd" };
+    render();
+  }
+
+  app.append(
+    crumbs([V.id,"Mazo "+(S.di+1)], {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}),
+    h("div", {class:"progress"}, h("i", {style:"width:"+((S.i)/deck.length*100)+"%"})),
+    h("div", {class:"count"}, h("span", {}, "Palabra "+(S.i+1)+" de "+deck.length), h("span", {}, "Aciertos: "+S.score)),
+    h("div", {class:"qcard"}, wordEl, reveal),
+    opts,
+    S.answered && correct ? h("div", {class:"status ok"}, "¡Correcto!") : null,
+    (S.answered && !correct) || S.peeked
+      ? h("div", {},
+          h("div", {class:"status bad"}, S.peeked ? "Revisaste la respuesta." : "Incorrecto."),
+          h("button", {class:"btn", onclick:next}, S.i+1<deck.length ? "Siguiente →" : "Terminar mazo"))
+      : null
+  );
+}
+
+/* ---------- Fin de mazo ---------- */
+function deckEnd(){
+  const { V, decks, deck } = ctx();
+  const last = S.di === decks.length-1;
+  app.append(
+    crumbs([V.id,"Mazo "+(S.di+1)+" terminado"]),
+    h("div", {class:"result"},
+      h("div", {class:"score"}, S.score+" / "+deck.length),
+      h("p", {class:"sub"}, S.score===deck.length ? "Mazo perfecto." : "Puedes repetir el mazo cuando quieras."),
+      last
+        ? h("button", {class:"btn", onclick:()=>go({...S, view:"summary"})}, "Ver resumen del video")
+        : h("button", {class:"btn", onclick:()=>startDeck(S.di+1)}, "Siguiente mazo →"),
+      h("button", {class:"btn ghost", onclick:()=>startDeck(S.di)}, "Repetir mazo"),
+      h("button", {class:"btn ghost", onclick:()=>go({view:"video", lang:S.lang, ci:S.ci, vi:S.vi})}, "Mazos")
+    )
+  );
+}
+
+/* ---------- Resumen del video ---------- */
+function summary(){
+  const { V } = ctx();
+  app.append(
+    crumbs([V.id,"Resumen"], {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}),
+    h("h2", {}, "Resumen · "+V.id),
+    h("p", {class:"sub"}, "Lee cada línea en japonés. Toca para ver la traducción."),
+    V.lines.map(l => {
+      const box = h("div", {class:"line", role:"button", tabindex:"0"},
+        h("div", {class:"t"}, "["+l.t+"]"),
+        h("div", {class:"jp", lang:"ja"}, l.jp));
+      let open = false, tr = null;
+      const toggle = () => {
+        open = !open;
+        if (open){ tr = h("div", {class:"tr"}, l.es); box.append(tr); } else tr.remove();
+      };
+      box.addEventListener("click", toggle);
+      box.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); }});
+      return box;
+    }),
+    h("button", {class:"btn", onclick:()=>go({view:"container", lang:S.lang, ci:S.ci})}, "Volver a los videos")
+  );
+}
+
+render();
+</script>
+</body>
+</html>
