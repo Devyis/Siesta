@@ -173,12 +173,50 @@ const DATA = {
           },
           { id: "J1.2", title: "Video 2", lines: [], words: [] }
         ]
+      },
+      /* ===== MINADAS (no aparecen dentro de Japonés; salen en el hub) ===== */
+      {
+        id: "JM", title: "Con contexto", mined: true, kind: "ctx",
+        videos: [
+          {
+            id: "JM.1", title: "Tanmoshi · el PV",
+            lines: [
+              { t: "",
+                jp: "俺さ、一番最初にハマったライトノベルがこの作品でさ、たんもし関連のpvとか出る度に身体がゾクゾクするんだよ",
+                es: "Yo, la primera novela ligera que me enganchó fue esta obra, y cada vez que sale un PV relacionado con «Tanmoshi» me da un escalofrío por todo el cuerpo." }
+            ],
+            words: [
+              { w: "俺",         r: "ore",          es: "yo (masculino, informal)" },
+              { w: "一番",       r: "ichiban",      es: "el número uno; lo más" },
+              { w: "最初",       r: "saisho",       es: "primero; el inicio" },
+              { w: "ハマる",     r: "hamaru",       es: "engancharse; quedar absorto" },
+              { w: "ライトノベル", r: "raito noberu", es: "novela ligera" },
+              { w: "この",       r: "kono",         es: "este / esta" },
+              { w: "作品",       r: "sakuhin",      es: "obra" },
+              { w: "たんもし",   r: "tanmoshi",     es: "abreviatura de «Tantei wa Mō, Shindeiru»" },
+              { w: "関連",       r: "kanren",       es: "relacionado" },
+              { w: "PV",         r: "pī bī",        es: "video promocional" },
+              { w: "出る",       r: "deru",         es: "salir; aparecer" },
+              { w: "度",         r: "tabi",         es: "cada vez que" },
+              { w: "身体",       r: "karada",       es: "cuerpo" },
+              { w: "ゾクゾク",   r: "zokuzoku",     es: "escalofríos; emoción" }
+            ]
+          }
+        ]
+      },
+      {
+        id: "JS", title: "Sin contexto", mined: true, kind: "loose",
+        videos: [ { id: "JS.1", title: "Palabras sueltas", lines: [], words: [] } ]
       }
     ]
   },
   pt: {
     name: "Portugués", native: "Português", cls: "pt",
-    containers: []
+    containers: [
+      { id: "PM", title: "Con contexto", mined: true, kind: "ctx", videos: [] },
+      { id: "PS", title: "Sin contexto", mined: true, kind: "loose",
+        videos: [ { id: "PS.1", title: "Palabras sueltas", lines: [], words: [] } ] }
+    ]
   }
 };
 
@@ -377,7 +415,7 @@ function crumbs(parts, backTo){
 }
 function render(){
   app.innerHTML = "";
-  ({ loading, login, hub, langs, lang, container, video, quiz, deckEnd, summary, srsHome, reviewEnd })[S.view]();
+  ({ loading, login, hub, minedHome, langs, lang, container, video, quiz, deckEnd, summary, srsHome, reviewEnd })[S.view]();
 }
 
 /* ---------- Carga y login ---------- */
@@ -498,6 +536,12 @@ function hub(){
     h("div", {class:"grid"},
       h("button", {class:"tile", onclick:()=>go({view:"langs"})},
         h("div", {class:"big"}, "🗂️"), h("div", {class:"name"}, "Flashcards idiomas")),
+      Object.entries(DATA).filter(([k, L]) => L.containers.some(c => c.mined)).map(([k, L]) => {
+        const n = L.containers.filter(c => c.mined).reduce((a, c) => a + c.videos.reduce((b, v) => b + v.words.length, 0), 0);
+        return h("button", {class:"tile "+L.cls, onclick:()=>go({view:"minedHome", lang:k})},
+          h("div", {class:"big"}, "⛏️"), h("div", {class:"name"}, "Minadas "+L.name),
+          h("div", {class:"meta"}, n ? n+" palabras" : "Aún vacío"));
+      }),
       h("button", {class:"tile", onclick:()=>go({view:"srsHome"})},
         h("div", {class:"big"}, "🔁"), h("div", {class:"name"}, "Repaso SRS"),
         h("div", {class:"meta"}, st.due ? st.due+" pendiente(s)" : st.waiting ? waitTxt(st) : "Al día"),
@@ -518,7 +562,29 @@ function langs(){
         h("button", {class:"tile "+l.cls, onclick:()=>go({view:"lang", lang:key})},
           h("div", {class:"big"}, l.native.slice(0,2)),
           h("div", {class:"name"}, l.name),
-          h("div", {class:"meta"}, l.containers.length ? l.containers.length+" contenedor(es)" : "Próximamente")))
+          h("div", {class:"meta"}, l.containers.filter(c => !c.mined).length ? l.containers.filter(c => !c.mined).length+" contenedor(es)" : "Próximamente")))
+    )
+  );
+}
+
+/* ---------- Minadas de un idioma ---------- */
+function minedHome(){
+  const L = DATA[S.lang];
+  const ci = L.containers.findIndex(c => c.mined && c.kind === "ctx");
+  const li = L.containers.findIndex(c => c.mined && c.kind === "loose");
+  const words = c => c.videos.reduce((a, v) => a + v.words.length, 0);
+  const ctx = L.containers[ci], loose = L.containers[li];
+  put(
+    crumbs(["Hub","Minadas "+L.name], {view:"hub"}),
+    h("h2", {}, "Minadas · "+L.name),
+    h("p", {class:"sub"}, "Palabras que sacas de lo que consumes."),
+    h("div", {class:"grid"},
+      ctx ? h("button", {class:"tile "+L.cls, onclick:()=>go({view:"container", lang:S.lang, ci})},
+        h("div", {class:"big"}, "💬"), h("div", {class:"name"}, "Con contexto"),
+        h("div", {class:"meta"}, ctx.videos.length ? ctx.videos.length+" entrada(s) · resumen al final" : "Aún vacío")) : null,
+      loose ? h("button", {class:"tile "+L.cls, onclick:()=>go({view:"video", lang:S.lang, ci:li, vi:0})},
+        h("div", {class:"big"}, "🧩"), h("div", {class:"name"}, "Sin contexto"),
+        h("div", {class:"meta"}, words(loose) ? words(loose)+" palabras · sin resumen" : "Aún vacío")) : null
     )
   );
 }
@@ -530,8 +596,8 @@ function lang(){
     crumbs(["Hub","Idiomas",L.name], {view:"langs"}),
     h("h2", {}, L.name),
     h("p", {class:"sub"}, "Elige un contenedor."),
-    L.containers.length
-      ? h("div", {class:"grid"}, L.containers.map((c,i) =>
+    L.containers.some(c => !c.mined)
+      ? h("div", {class:"grid"}, L.containers.map((c,i) => c.mined ? null :
           h("button", {class:"tile "+L.cls, onclick:()=>go({view:"container", lang:S.lang, ci:i})},
             h("div", {class:"tag"}, c.id),
             h("div", {class:"name"}, c.title),
@@ -544,10 +610,10 @@ function lang(){
 function container(){
   const L = DATA[S.lang], C = L.containers[S.ci];
   put(
-    crumbs(["Hub",L.name,C.id+" "+C.title], {view:"lang", lang:S.lang}),
+    crumbs(C.mined ? ["Hub","Minadas "+L.name,C.title] : ["Hub",L.name,C.id+" "+C.title], C.mined ? {view:"minedHome", lang:S.lang} : {view:"lang", lang:S.lang}),
     h("h2", {}, C.id+" · "+C.title),
     h("p", {class:"sub"}, "Elige un video."),
-    h("div", {class:"grid"}, C.videos.map((v,i) => {
+    !C.videos.length ? h("div", {class:"empty"}, "Aún no hay entradas. Pega una frase en el chat para agregarla.") : h("div", {class:"grid"}, C.videos.map((v,i) => {
       const decks = Math.ceil(v.words.length/DECK_SIZE);
       const due = dueCards(v.words.map(w => mk(S.lang, v, w))).length;
       return h("button", {class:"tile "+L.cls, onclick:()=>go({view:"video", lang:S.lang, ci:S.ci, vi:i})},
@@ -562,14 +628,14 @@ function container(){
 /* ---------- Mazos ---------- */
 function vref(){ const L = DATA[S.lang], C = L.containers[S.ci], V = C.videos[S.vi]; return {L,C,V}; }
 function video(){
-  const { L, V } = vref();
+  const { L, C, V } = vref();
   const cards = V.words.map(w => mk(S.lang, V, w));
   const decks = chunk(cards, DECK_SIZE);
   const due = dueCards(cards);
   const studied = cards.filter(c => SRS[c.id]).length;
   const back = {view:"video", lang:S.lang, ci:S.ci, vi:S.vi};
   put(
-    crumbs(["Hub",L.name,V.id], {view:"container", lang:S.lang, ci:S.ci}),
+    crumbs(C.mined ? ["Hub","Minadas "+L.name,V.title] : ["Hub",L.name,V.id], C.mined && C.kind === "loose" ? {view:"minedHome", lang:S.lang} : {view:"container", lang:S.lang, ci:S.ci}),
     h("h2", {}, V.id+" · "+V.title),
     h("p", {class:"sub"}, "Mazos de "+DECK_SIZE+" palabras. Estudiadas: "+studied+" de "+cards.length+"."),
     due.length
@@ -620,7 +686,7 @@ function startDeck(di){
   const cards = V.words.map(w => mk(S.lang, V, w));
   const deck = chunk(cards, DECK_SIZE)[di];
   S = { ...S, view:"quiz", di,
-        sess: newSess("deck", deck, cards, {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}) };
+        sess: newSess("deck", deck, cards.length >= 8 ? cards : allCards(S.lang), {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}) };
   render(); window.scrollTo(0,0);
 }
 function startHard(cards, langKey, back){
@@ -735,7 +801,9 @@ function deckEnd(){
       h("div", {class:"score"}, se.score+" / "+se.total),
       h("p", {class:"sub"}, se.score === se.total ? "Mazo perfecto. Las palabras entran al repaso SRS." : "Las falladas volverán en el repaso SRS en unos minutos."),
       last
-        ? h("button", {class:"btn", onclick:()=>go({...S, view:"summary"})}, "Ver resumen del video")
+        ? (V.lines.length
+            ? h("button", {class:"btn", onclick:()=>go({...S, view:"summary"})}, "Ver resumen")
+            : h("button", {class:"btn", onclick:()=>go({view:"video", lang:S.lang, ci:S.ci, vi:S.vi})}, "Terminar"))
         : h("button", {class:"btn", onclick:()=>startDeck(S.di+1)}, "Siguiente mazo →"),
       h("button", {class:"btn ghost", onclick:()=>startDeck(S.di)}, "Repetir mazo"),
       h("button", {class:"btn ghost", onclick:()=>go({view:"video", lang:S.lang, ci:S.ci, vi:S.vi})}, "Mazos")
@@ -752,7 +820,7 @@ function summary(){
     h("p", {class:"sub"}, "Lee cada línea en japonés. Toca para ver la traducción."),
     V.lines.map(l => {
       const box = h("div", {class:"line", role:"button", tabindex:"0"},
-        h("div", {class:"t"}, "["+l.t+"]"),
+        l.t ? h("div", {class:"t"}, "["+l.t+"]") : null,
         h("div", {class:"jp", lang:"ja"}, l.jp));
       let open = false, tr = null;
       const toggle = () => {
