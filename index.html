@@ -66,6 +66,18 @@ h1{font-size:2.1rem} h2{font-size:1.5rem}
 .result{text-align:center;padding:30px 10px}
 .result .score{font-family:Fraunces,serif;font-size:3.4rem;font-weight:700}
 
+/* srs */
+.tile{position:relative}
+.badge{position:absolute;top:12px;right:12px;background:var(--bad);color:#fff;border-radius:999px;min-width:26px;height:26px;padding:0 8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700}
+.srsbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--card);border:1px solid var(--accent);border-radius:14px;padding:12px 16px;margin-bottom:16px}
+.btn.small{margin:0;padding:8px 16px;font-size:.95rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:18px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:2px}
+.stat b{font-family:Fraunces,serif;font-size:1.6rem}
+.stat span{color:var(--muted);font-size:.85rem}
+.srsmsg{color:var(--muted);font-weight:400;font-size:.9rem}
+.btn.danger{margin-left:0;color:var(--bad);border-color:var(--bad)}
+
 /* summary */
 .line{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:12px;cursor:pointer}
 .line:hover{border-color:var(--accent)}
@@ -146,23 +158,87 @@ const DATA = {
 };
 
 /* =====================================================================
+   SRS  —  repetición espaciada (estilo SM-2 simplificado)
+   Cada palabra guarda: ease (facilidad), interval (días), reps, lapses, due.
+   · Acierto a la primera:  1 día → 3 días → intervalo × ease
+   · Fallo (o ver la respuesta): vuelve en 10 min, baja la facilidad
+   El progreso se guarda en localStorage de tu navegador.
+   ===================================================================== */
+const DECK_SIZE = 10, SESSION_MAX = 20;
+const KEY = "flashcards_srs_v1", DAY = 864e5, MIN = 6e4;
+let SRS = loadSRS();
+function loadSRS(){ try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e){ return {}; } }
+function saveSRS(){ try { localStorage.setItem(KEY, JSON.stringify(SRS)); } catch(e){} }
+const now = () => Date.now();
+
+function grade(id, ok){
+  const t = now();
+  const c = SRS[id] || { ease:2.5, interval:0, reps:0, lapses:0, due:t };
+  if (ok){
+    c.interval = c.reps === 0 ? 1 : c.reps === 1 ? 3 : Math.max(c.interval+1, Math.round(c.interval*c.ease));
+    c.reps++;
+    c.ease = Math.min(3, c.ease + 0.05);
+    c.due = t + c.interval*DAY;
+  } else {
+    c.reps = 0; c.interval = 0; c.lapses++;
+    c.ease = Math.max(1.3, c.ease - 0.2);
+    c.due = t + 10*MIN;
+  }
+  SRS[id] = c;
+  saveSRS();
+}
+function fmtIn(ms){
+  if (ms <= 0) return "ahora";
+  if (ms < 60*MIN) return Math.max(1, Math.round(ms/MIN)) + " min";
+  if (ms < 22*60*MIN) return Math.round(ms/(60*MIN)) + " h";
+  const d = Math.round(ms/DAY);
+  return d === 1 ? "1 día" : d + " días";
+}
+
+/* ---------- Tarjetas ---------- */
+function mk(lang, V, w){ return { id: lang+"|"+V.id+"|"+w.w, lang, vid: V.id, w:w.w, r:w.r, es:w.es }; }
+function allCards(langKey){
+  const out = [];
+  for (const [lk, L] of Object.entries(DATA)){
+    if (langKey && lk !== langKey) continue;
+    L.containers.forEach(C => C.videos.forEach(V => V.words.forEach(w => out.push(mk(lk, V, w)))));
+  }
+  return out;
+}
+function isDue(c){ const s = SRS[c.id]; return !!s && s.due <= now(); }
+function dueCards(list){ return list.filter(isDue).sort((a,b) => SRS[a.id].due - SRS[b.id].due); }
+function stats(langKey){
+  const t = now(); let studied=0, due=0, mature=0, next=Infinity;
+  const cards = allCards(langKey);
+  cards.forEach(c => {
+    const s = SRS[c.id]; if (!s) return;
+    studied++;
+    if (s.due <= t) due++; else next = Math.min(next, s.due);
+    if (s.interval >= 21) mature++;
+  });
+  return { total:cards.length, studied, due, mature, next };
+}
+
+/* =====================================================================
    APP
    ===================================================================== */
 const app = document.getElementById("app");
-const DECK_SIZE = 10;
 let timer = null;
-let S = { view: "hub" };   // estado de navegación
+let S = { view: "hub" };
 
 function h(tag, attrs, ...kids){
   const el = document.createElement(tag);
   for (const k in (attrs||{})){
-    if (k === "class") el.className = attrs[k];
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2), attrs[k]);
-    else el.setAttribute(k, attrs[k]);
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
   }
-  kids.flat().forEach(c => { if (c != null) el.append(c.nodeType ? c : document.createTextNode(c)); });
+  kids.flat(Infinity).forEach(c => { if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(c)); });
   return el;
 }
+function put(...kids){ kids.flat(Infinity).forEach(c => { if (c != null && c !== false) app.append(c); }); }
 function go(next){ clearTimeout(timer); S = next; render(); window.scrollTo(0,0); }
 function shuffle(a){ a = a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 function chunk(a,n){ const r=[]; for(let i=0;i<a.length;i+=n) r.push(a.slice(i,i+n)); return r; }
@@ -173,27 +249,31 @@ function crumbs(parts, backTo){
   bar.append(h("span", {}, parts.join(" / ")));
   return bar;
 }
-
 function render(){
   app.innerHTML = "";
-  ({ hub, langs, lang, container, video, quiz, deckEnd, summary })[S.view]();
+  ({ hub, langs, lang, container, video, quiz, deckEnd, summary, srsHome, reviewEnd })[S.view]();
 }
 
 /* ---------- Hub ---------- */
 function hub(){
-  app.append(
+  const st = stats();
+  put(
     h("h1", {}, "Hub de estudio"),
     h("p", {class:"sub"}, "Elige una sección."),
     h("div", {class:"grid"},
       h("button", {class:"tile", onclick:()=>go({view:"langs"})},
-        h("div", {class:"big"}, "🗂️"), h("div", {class:"name"}, "Flashcards idiomas"))
+        h("div", {class:"big"}, "🗂️"), h("div", {class:"name"}, "Flashcards idiomas")),
+      h("button", {class:"tile", onclick:()=>go({view:"srsHome"})},
+        h("div", {class:"big"}, "🔁"), h("div", {class:"name"}, "Repaso SRS"),
+        h("div", {class:"meta"}, st.due ? st.due+" pendiente(s)" : "Al día"),
+        st.due ? h("span", {class:"badge"}, st.due) : null)
     )
   );
 }
 
 /* ---------- Idiomas ---------- */
 function langs(){
-  app.append(
+  put(
     crumbs(["Hub","Flashcards idiomas"], {view:"hub"}),
     h("h2", {}, "Flashcards idiomas"),
     h("p", {class:"sub"}, "¿Qué idioma estudiamos?"),
@@ -207,10 +287,10 @@ function langs(){
   );
 }
 
-/* ---------- Contenedores de un idioma (J1, J2...) ---------- */
+/* ---------- Contenedores ---------- */
 function lang(){
   const L = DATA[S.lang];
-  app.append(
+  put(
     crumbs(["Hub","Idiomas",L.name], {view:"langs"}),
     h("h2", {}, L.name),
     h("p", {class:"sub"}, "Elige un contenedor."),
@@ -224,120 +304,166 @@ function lang(){
   );
 }
 
-/* ---------- Videos de un contenedor (J1.1, J1.2...) ---------- */
+/* ---------- Videos ---------- */
 function container(){
   const L = DATA[S.lang], C = L.containers[S.ci];
-  app.append(
+  put(
     crumbs(["Hub",L.name,C.id+" "+C.title], {view:"lang", lang:S.lang}),
     h("h2", {}, C.id+" · "+C.title),
     h("p", {class:"sub"}, "Elige un video."),
     h("div", {class:"grid"}, C.videos.map((v,i) => {
       const decks = Math.ceil(v.words.length/DECK_SIZE);
+      const due = dueCards(v.words.map(w => mk(S.lang, v, w))).length;
       return h("button", {class:"tile "+L.cls, onclick:()=>go({view:"video", lang:S.lang, ci:S.ci, vi:i})},
         h("div", {class:"tag"}, v.id),
         h("div", {class:"name"}, v.title),
-        h("div", {class:"meta"}, v.words.length ? v.words.length+" palabras · "+decks+" mazo(s)" : "Sin vocabulario aún"));
+        h("div", {class:"meta"}, v.words.length ? v.words.length+" palabras · "+decks+" mazo(s)" : "Sin vocabulario aún"),
+        due ? h("span", {class:"badge"}, due) : null);
     }))
   );
 }
 
-/* ---------- Mazos de un video ---------- */
+/* ---------- Mazos ---------- */
+function vref(){ const L = DATA[S.lang], C = L.containers[S.ci], V = C.videos[S.vi]; return {L,C,V}; }
 function video(){
-  const L = DATA[S.lang], C = L.containers[S.ci], V = C.videos[S.vi];
-  const decks = chunk(V.words, DECK_SIZE);
-  app.append(
+  const { L, V } = vref();
+  const cards = V.words.map(w => mk(S.lang, V, w));
+  const decks = chunk(cards, DECK_SIZE);
+  const due = dueCards(cards);
+  const studied = cards.filter(c => SRS[c.id]).length;
+  const back = {view:"video", lang:S.lang, ci:S.ci, vi:S.vi};
+  put(
     crumbs(["Hub",L.name,V.id], {view:"container", lang:S.lang, ci:S.ci}),
     h("h2", {}, V.id+" · "+V.title),
-    h("p", {class:"sub"}, "Mazos de "+DECK_SIZE+" palabras."),
+    h("p", {class:"sub"}, "Mazos de "+DECK_SIZE+" palabras. Estudiadas: "+studied+" de "+cards.length+"."),
+    due.length
+      ? h("div", {class:"srsbar"},
+          h("span", {}, h("b", {}, due.length), " palabra(s) para repasar de este video"),
+          h("button", {class:"btn small", onclick:()=>startReview(due.slice(0,SESSION_MAX), S.lang, back)}, "Repasar"))
+      : null,
     decks.length
-      ? h("div", {class:"grid"}, decks.map((d,i) =>
-          h("button", {class:"tile "+L.cls, onclick:()=>startDeck(i)},
+      ? h("div", {class:"grid"}, decks.map((d,i) => {
+          const n = d.filter(c => SRS[c.id]).length;
+          return h("button", {class:"tile "+L.cls, onclick:()=>startDeck(i)},
             h("div", {class:"tag"}, "Mazo "+(i+1)),
             h("div", {class:"name"}, d[0].w+" …"),
-            h("div", {class:"meta"}, d.length+" palabras"))))
+            h("div", {class:"meta"}, d.length+" palabras"+(n ? " · "+n+" vistas" : "")));
+        }))
       : h("div", {class:"empty"}, "Este video todavía no tiene vocabulario.")
   );
 }
 
-/* ---------- Quiz ---------- */
-function startDeck(di){
-  S = { ...S, view:"quiz", di, i:0, score:0, answered:false, picked:null, peeked:false };
-  render();
+/* ---------- Sesiones ---------- */
+function newSess(mode, cards, pool, back){
+  return { mode, queue: cards.slice(), total: cards.length, done: 0, score: 0,
+           seen: {}, pool, back, answered:false, picked:null, peeked:false, res:null, msg:"", options:null };
 }
-function ctx(){
-  const L = DATA[S.lang], V = L.containers[S.ci].videos[S.vi];
-  const decks = chunk(V.words, DECK_SIZE);
-  return { L, V, decks, deck: decks[S.di] };
+function startDeck(di){
+  const { V } = vref();
+  const cards = V.words.map(w => mk(S.lang, V, w));
+  const deck = chunk(cards, DECK_SIZE)[di];
+  S = { ...S, view:"quiz", di,
+        sess: newSess("deck", deck, cards, {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}) };
+  render(); window.scrollTo(0,0);
+}
+function startReview(cards, langKey, back){
+  S = { view:"quiz", lang:langKey, sess: newSess("review", cards, allCards(langKey), back) };
+  render(); window.scrollTo(0,0);
 }
 
-function quiz(){
-  const { L, V, decks, deck } = ctx();
-  const card = deck[S.i];
-  if (!S.options){
-    const wrong = shuffle(V.words.filter(x => x.es !== card.es)).slice(0,3).map(x=>x.es);
-    S.options = shuffle([card.es, ...wrong]);
+/* Aplica el resultado al SRS */
+function srsApply(card, ok, mode){
+  if (mode === "review") grade(card.id, ok);
+  else {                                  // en mazos: solo si es nueva, está vencida o fallaste
+    const s = SRS[card.id];
+    if (!s || s.due <= now() || !ok) grade(card.id, ok);
   }
-  const revealed = S.answered || S.peeked;
-  const correct = S.answered && S.picked === card.es;
+}
+
+/* ---------- Quiz (mazos y repaso) ---------- */
+function quiz(){
+  const se = S.sess, card = se.queue[0];
+  if (!se.options){
+    const wrong = shuffle(se.pool.filter(x => x.es !== card.es))
+      .filter((x,i,a) => a.findIndex(y => y.es === x.es) === i).slice(0,3).map(x => x.es);
+    se.options = shuffle([card.es, ...wrong]);
+  }
+  const revealed = se.answered || se.peeked;
+  const label = se.mode === "review" ? "Repaso" : "Mazo "+(S.di+1);
+
+  function fail(){
+    if (!se.seen[card.id]){ srsApply(card, false, se.mode); se.seen[card.id] = true;
+      se.msg = "Volverá a aparecer en 10 min."; }
+    else se.msg = "";
+    se.res = "bad";
+  }
+  function peek(){ if (revealed) return; se.peeked = true; fail(); render(); }
+  function choose(o){
+    if (revealed) return;
+    se.answered = true; se.picked = o;
+    if (o === card.es){
+      se.res = "ok"; se.msg = "";
+      if (!se.seen[card.id]){
+        se.seen[card.id] = true; se.score++;
+        const prevDue = SRS[card.id] ? SRS[card.id].due : null;
+        srsApply(card, true, se.mode);
+        const s = SRS[card.id];
+        if (s && s.due !== prevDue) se.msg = "Próximo repaso en " + fmtIn(s.due - now()) + "." ;
+      }
+      render();
+      timer = setTimeout(next, 1100);       // acierto → avanza solo
+    } else { fail(); render(); }            // fallo → avance manual
+  }
+  function next(){
+    clearTimeout(timer);
+    const c = se.queue.shift();
+    if (se.mode === "review" && se.res === "bad") se.queue.push(c);   // en repaso, la fallada se repite
+    else se.done++;
+    se.answered = false; se.picked = null; se.peeked = false; se.res = null; se.msg = ""; se.options = null;
+    if (!se.queue.length) S = { ...S, view: se.mode === "deck" ? "deckEnd" : "reviewEnd" };
+    render();
+  }
+
+  const wordEl = h("span", {class:"word", role:"button", tabindex:"0", lang:"ja",
+    onclick: peek, onkeydown: e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); peek(); } }}, card.w);
 
   const reveal = revealed
     ? h("div", {class:"reveal"}, h("div", {class:"romaji"}, card.r), h("div", {class:"es"}, card.es))
     : h("div", {class:"hint"}, "Toca la palabra para ver su traducción");
 
-  const wordEl = h("span", {class:"word", role:"button", tabindex:"0", lang:"ja",
-    onclick: peek, onkeydown:e=>{ if(e.key==="Enter"||e.key===" ") peek(); }}, card.w);
-  function peek(){ if (revealed) return; S.peeked = true; render(); }
-
-  const opts = h("div", {class:"opts"}, S.options.map(o => {
+  const opts = h("div", {class:"opts"}, se.options.map(o => {
     let cls = "opt";
-    if (revealed){
-      if (o === card.es) cls += " ok";
-      else if (o === S.picked) cls += " bad";
-    }
-    return h("button", {class:cls, disabled: revealed ? "" : null, onclick:()=>choose(o)}, o);
+    if (revealed){ if (o === card.es) cls += " ok"; else if (o === se.picked) cls += " bad"; }
+    return h("button", {class:cls, disabled: revealed, onclick:()=>choose(o)}, o);
   }));
-  if (!revealed) opts.querySelectorAll("button").forEach(b=>b.removeAttribute("disabled"));
 
-  function choose(o){
-    if (revealed) return;
-    S.answered = true; S.picked = o;
-    if (o === card.es){
-      S.score++;
-      render();
-      timer = setTimeout(next, 1100);   // acierto → avanza solo
-    } else render();                    // fallo → avance manual
-  }
-  function next(){
-    clearTimeout(timer);
-    if (S.i + 1 < deck.length) S = { ...S, i:S.i+1, answered:false, picked:null, peeked:false, options:null };
-    else S = { ...S, view:"deckEnd" };
-    render();
-  }
-
-  app.append(
-    crumbs([V.id,"Mazo "+(S.di+1)], {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}),
-    h("div", {class:"progress"}, h("i", {style:"width:"+((S.i)/deck.length*100)+"%"})),
-    h("div", {class:"count"}, h("span", {}, "Palabra "+(S.i+1)+" de "+deck.length), h("span", {}, "Aciertos: "+S.score)),
+  put(
+    crumbs([label, card.vid], se.back),
+    h("div", {class:"progress"}, h("i", {style:"width:"+(se.done/se.total*100)+"%"})),
+    h("div", {class:"count"}, h("span", {}, (se.done+1 > se.total ? se.total : se.done+1)+" de "+se.total+(se.queue.length>se.total-se.done?"":"")),
+                               h("span", {}, "Aciertos: "+se.score)),
     h("div", {class:"qcard"}, wordEl, reveal),
     opts,
-    S.answered && correct ? h("div", {class:"status ok"}, "¡Correcto!") : null,
-    (S.answered && !correct) || S.peeked
+    se.res === "ok" ? h("div", {class:"status ok"}, "¡Correcto! ", h("span", {class:"srsmsg"}, se.msg)) : null,
+    se.res === "bad"
       ? h("div", {},
-          h("div", {class:"status bad"}, S.peeked ? "Revisaste la respuesta." : "Incorrecto."),
-          h("button", {class:"btn", onclick:next}, S.i+1<deck.length ? "Siguiente →" : "Terminar mazo"))
+          h("div", {class:"status bad"}, (se.peeked ? "Revisaste la respuesta. " : "Incorrecto. "),
+             h("span", {class:"srsmsg"}, se.msg)),
+          h("button", {class:"btn", onclick:next}, se.queue.length > 1 || (se.mode==="review") ? "Siguiente →" : "Terminar"))
       : null
   );
 }
 
 /* ---------- Fin de mazo ---------- */
 function deckEnd(){
-  const { V, decks, deck } = ctx();
-  const last = S.di === decks.length-1;
-  app.append(
-    crumbs([V.id,"Mazo "+(S.di+1)+" terminado"]),
+  const se = S.sess, { V } = vref();
+  const decks = Math.ceil(V.words.length / DECK_SIZE);
+  const last = S.di === decks - 1;
+  put(
+    crumbs([V.id, "Mazo "+(S.di+1)+" terminado"]),
     h("div", {class:"result"},
-      h("div", {class:"score"}, S.score+" / "+deck.length),
-      h("p", {class:"sub"}, S.score===deck.length ? "Mazo perfecto." : "Puedes repetir el mazo cuando quieras."),
+      h("div", {class:"score"}, se.score+" / "+se.total),
+      h("p", {class:"sub"}, se.score === se.total ? "Mazo perfecto. Las palabras entran al repaso SRS." : "Las falladas volverán en el repaso SRS en unos minutos."),
       last
         ? h("button", {class:"btn", onclick:()=>go({...S, view:"summary"})}, "Ver resumen del video")
         : h("button", {class:"btn", onclick:()=>startDeck(S.di+1)}, "Siguiente mazo →"),
@@ -349,12 +475,12 @@ function deckEnd(){
 
 /* ---------- Resumen del video ---------- */
 function summary(){
-  const { V } = ctx();
-  app.append(
+  const { V } = vref();
+  put(
     crumbs([V.id,"Resumen"], {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}),
     h("h2", {}, "Resumen · "+V.id),
     h("p", {class:"sub"}, "Lee cada línea en japonés. Toca para ver la traducción."),
-    ...V.lines.map(l => {
+    V.lines.map(l => {
       const box = h("div", {class:"line", role:"button", tabindex:"0"},
         h("div", {class:"t"}, "["+l.t+"]"),
         h("div", {class:"jp", lang:"ja"}, l.jp));
@@ -364,10 +490,52 @@ function summary(){
         if (open){ tr = h("div", {class:"tr"}, l.es); box.append(tr); } else tr.remove();
       };
       box.addEventListener("click", toggle);
-      box.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); }});
+      box.addEventListener("keydown", e => { if (e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); }});
       return box;
     }),
     h("button", {class:"btn", onclick:()=>go({view:"container", lang:S.lang, ci:S.ci})}, "Volver a los videos")
+  );
+}
+
+/* ---------- Repaso SRS ---------- */
+function srsHome(){
+  const st = stats();
+  const nextTxt = st.next === Infinity ? "—" : "en " + fmtIn(st.next - now());
+  put(
+    crumbs(["Hub","Repaso SRS"], {view:"hub"}),
+    h("h2", {}, "Repaso SRS"),
+    h("p", {class:"sub"}, "Palabras que ya estudiaste y toca repasar. Sesiones de hasta "+SESSION_MAX+"."),
+    h("div", {class:"stats"},
+      h("div", {class:"stat"}, h("b", {}, st.due), h("span", {}, "pendientes")),
+      h("div", {class:"stat"}, h("b", {}, st.studied+"/"+st.total), h("span", {}, "estudiadas")),
+      h("div", {class:"stat"}, h("b", {}, st.mature), h("span", {}, "dominadas (≥21 días)")),
+      h("div", {class:"stat"}, h("b", {}, nextTxt), h("span", {}, "próxima pendiente"))),
+    Object.entries(DATA).map(([lk, L]) => {
+      const ls = stats(lk);
+      if (!ls.total) return null;
+      const due = dueCards(allCards(lk));
+      return h("div", {class:"srsbar"},
+        h("span", {}, h("b", {}, L.name), ": ", due.length ? due.length+" pendiente(s)" : "nada pendiente ("+ls.studied+" estudiadas)"),
+        due.length ? h("button", {class:"btn small", onclick:()=>startReview(due.slice(0,SESSION_MAX), lk, {view:"srsHome"})}, "Repasar") : null);
+    }),
+    st.studied === 0 ? h("div", {class:"empty"}, "Aún no hay palabras en el SRS. Completa un mazo y aparecerán aquí.") : null,
+    h("button", {class:"btn ghost danger", onclick:()=>{
+      if (confirm("¿Borrar todo el progreso del SRS? No se puede deshacer.")){ SRS = {}; saveSRS(); render(); }
+    }}, "Reiniciar progreso")
+  );
+}
+function reviewEnd(){
+  const se = S.sess;
+  const st = stats(S.lang);
+  const nextTxt = st.next === Infinity ? null : "Próxima palabra pendiente en " + fmtIn(st.next - now()) + ".";
+  put(
+    crumbs(["Repaso terminado"]),
+    h("div", {class:"result"},
+      h("div", {class:"score"}, se.score+" / "+se.total),
+      h("p", {class:"sub"}, "Acertadas a la primera. " + (st.due ? st.due+" más siguen pendientes." : (nextTxt || ""))),
+      st.due ? h("button", {class:"btn", onclick:()=>startReview(dueCards(allCards(S.lang)).slice(0,SESSION_MAX), S.lang, se.back)}, "Seguir repasando") : null,
+      h("button", {class:"btn ghost", onclick:()=>go(se.back)}, "Volver")
+    )
   );
 }
 
