@@ -74,6 +74,16 @@ h1{font-size:2.1rem} h2{font-size:1.5rem}
 .userbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px;color:var(--muted);font-size:.9rem}
 .userbar .back{margin-left:auto}
 .syncdot{font-size:.85rem}
+/* difíciles */
+.cell{display:flex;flex-direction:column;gap:8px}
+.cell .tile{width:100%}
+.chip{border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:999px;padding:7px 12px;font:inherit;font-size:.88rem;font-weight:700;cursor:pointer}
+.chip:hover{background:var(--accent);color:var(--accent-ink)}
+.tile.hardtile{border-color:var(--accent)}
+.qcard{position:relative}
+.star{position:absolute;top:12px;right:12px;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer}
+.star:hover{border-color:var(--accent);color:var(--ink)}
+.star.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
 /* % de mazo */
 .pwrap{width:100%;margin-top:6px}
 .pbar{height:6px;background:var(--line);border-radius:6px;overflow:hidden}
@@ -186,12 +196,13 @@ const DAY = 864e5, MIN = 6e4;
 /* --- Supabase (proyecto mis-cursos, tabla siesta_srs_cards) --- */
 const SUPABASE_URL = "https://ebtehnbffwobpdnmftod.supabase.co";
 const SUPABASE_KEY = "sb_publishable_N60b6zwvsPG66AY3cv46Ag_GRPl-LUD";   // clave pública: la seguridad la da RLS
-const TABLE = "siesta_srs_cards", DECK_TABLE = "siesta_deck_results";
+const TABLE = "siesta_srs_cards", DECK_TABLE = "siesta_deck_results", HARD_TABLE = "siesta_hard_cards";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let USER = null;        // usuario con sesión
 let SRS = {};           // progreso en memoria: { cardId: {ease, interval, reps, lapses, due} }
 let dirty = {};         // cambios pendientes de subir: { cardId: versión }
+let HARD = {}, dirtyHard = {};     // palabras marcadas como difíciles: { cardId: true }
 let DECKS = {}, dirtyDecks = {};   // último resultado por mazo: { deckId: {score,total} }
 let ver = 0, syncState = "ok", flushTimer = null, NOTICE = "";
 
@@ -200,7 +211,7 @@ const toRow = (id, c) => ({ user_id: USER.id, card_id: id, ease: c.ease, interva
 const fromRow = r => ({ ease: r.ease, interval: r.interval_days, reps: r.reps, lapses: r.lapses, due: Date.parse(r.due) });
 
 function cacheKey(){ return "siesta_cache_" + USER.id; }
-function saveSRS(){ try { localStorage.setItem(cacheKey(), JSON.stringify({ srs:SRS, dirty, decks:DECKS, dirtyDecks })); } catch(e){} }
+function saveSRS(){ try { localStorage.setItem(cacheKey(), JSON.stringify({ srs:SRS, dirty, decks:DECKS, dirtyDecks, hard:HARD, dirtyHard })); } catch(e){} }
 const deckId = (lang, vid, di) => lang + "|" + vid + "|" + di;
 function syncText(){ return syncState === "ok" ? "✓ Sincronizado" : syncState === "pending" ? "Sincronizando…" : "⚠ Sin conexión: se subirá luego"; }
 function updateSync(){ document.querySelectorAll(".syncdot").forEach(el => el.textContent = syncText()); }
@@ -210,11 +221,18 @@ function recordDeck(id, score, total){
   DECKS[id] = { score, total }; dirtyDecks[id] = ++ver; syncState = "pending";
   saveSRS(); updateSync(); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400);
 }
+function toggleHard(id){
+  if (HARD[id]) delete HARD[id]; else HARD[id] = true;
+  dirtyHard[id] = ++ver; syncState = "pending";
+  saveSRS(); updateSync(); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400);
+  render();
+}
 async function flush(){
   if (!USER) return;
   const snap = { ...dirty }, ids = Object.keys(snap);
   const dsnap = { ...dirtyDecks }, dids = Object.keys(dsnap);
-  if (!ids.length && !dids.length){ syncState = "ok"; updateSync(); return; }
+  const hsnap = { ...dirtyHard }, hids = Object.keys(hsnap);
+  if (!ids.length && !dids.length && !hids.length){ syncState = "ok"; updateSync(); return; }
   try {
     if (ids.length){
       const { error } = await sb.from(TABLE).upsert(ids.map(id => toRow(id, SRS[id])), { onConflict: "user_id,card_id" });
@@ -227,13 +245,31 @@ async function flush(){
       if (error) throw error;
       dids.forEach(id => { if (dirtyDecks[id] === dsnap[id]) delete dirtyDecks[id]; });
     }
-    syncState = (Object.keys(dirty).length || Object.keys(dirtyDecks).length) ? "pending" : "ok";
+    if (hids.length){
+      const add = hids.filter(id => HARD[id]), del = hids.filter(id => !HARD[id]);
+      if (add.length){
+        const { error } = await sb.from(HARD_TABLE).upsert(add.map(id => ({ user_id: USER.id, card_id: id })), { onConflict: "user_id,card_id" });
+        if (error) throw error;
+      }
+      if (del.length){
+        const { error } = await sb.from(HARD_TABLE).delete().eq("user_id", USER.id).in("card_id", del);
+        if (error) throw error;
+      }
+      hids.forEach(id => { if (dirtyHard[id] === hsnap[id]) delete dirtyHard[id]; });
+    }
+    syncState = (Object.keys(dirty).length || Object.keys(dirtyDecks).length || Object.keys(dirtyHard).length) ? "pending" : "ok";
   } catch(e){ syncState = "error"; }
   saveSRS(); updateSync();
 }
 window.addEventListener("online", flush);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
 
+async function loadHard(){
+  const { data, error } = await sb.from(HARD_TABLE).select("card_id");
+  if (error) throw error;
+  const o = {}; data.forEach(r => o[r.card_id] = true);
+  return o;
+}
 async function loadDecks(){
   const { data, error } = await sb.from(DECK_TABLE).select("deck_id,score,total");
   if (error) throw error;
@@ -422,8 +458,12 @@ async function enter(){
     DECKS = await loadDecks();
     dirtyDecks = cache.dirtyDecks || {};
     Object.keys(dirtyDecks).forEach(id => { if (cache.decks && cache.decks[id]) DECKS[id] = cache.decks[id]; else delete dirtyDecks[id]; });
+    HARD = await loadHard();
+    dirtyHard = cache.dirtyHard || {};
+    Object.keys(dirtyHard).forEach(id => { if (cache.hard && cache.hard[id]) HARD[id] = true; else delete HARD[id]; });   // aplica cambios locales pendientes
   } catch(e){
-    SRS = cache.srs || {}; dirty = cache.dirty || {}; DECKS = cache.decks || {}; dirtyDecks = cache.dirtyDecks || {}; syncState = "error";
+    SRS = cache.srs || {}; dirty = cache.dirty || {}; DECKS = cache.decks || {}; dirtyDecks = cache.dirtyDecks || {};
+    HARD = cache.hard || {}; dirtyHard = cache.dirtyHard || {}; syncState = "error";
   }
   // migrar progreso de la versión sin cuenta
   try {
@@ -436,7 +476,7 @@ async function enter(){
     }
   } catch(e){}
   saveSRS();
-  if (Object.keys(dirty).length || Object.keys(dirtyDecks).length){ syncState = "pending"; flush(); }
+  if (Object.keys(dirty).length || Object.keys(dirtyDecks).length || Object.keys(dirtyHard).length){ syncState = "pending"; flush(); }
   go({view:"hub"});
 }
 async function logout(){
@@ -538,20 +578,34 @@ function video(){
           h("button", {class:"btn small", onclick:()=>startReview(due.slice(0,SESSION_MAX), S.lang, back)}, "Repasar"))
       : null,
     decks.length
-      ? h("div", {class:"grid"}, decks.map((d,i) => {
-          const n = d.filter(c => SRS[c.id]).length;
-          const r = DECKS[deckId(S.lang, V.id, i)];
-          const pct = r ? Math.round(r.score / r.total * 100) : null;
-          return h("button", {class:"tile "+L.cls, onclick:()=>startDeck(i)},
-            h("div", {class:"tag"}, "Mazo "+(i+1)),
-            h("div", {class:"name"}, d[0].w+" …"),
-            h("div", {class:"meta"}, d.length+" palabras"+(n ? " · "+n+" vistas" : "")),
-            pct !== null
-              ? h("div", {class:"pwrap", title:"Último intento: "+r.score+" de "+r.total},
-                  h("div", {class:"pbar"+(pct === 100 ? " full" : "")}, h("i", {style:"width:"+pct+"%"})),
-                  h("div", {class:"ptxt"}, pct+"%"))
-              : null);
-        }))
+      ? h("div", {class:"grid"},
+          decks.map((d,i) => {
+            const n = d.filter(c => SRS[c.id]).length;
+            const r = DECKS[deckId(S.lang, V.id, i)];
+            const pct = r ? Math.round(r.score / r.total * 100) : null;
+            const hd = d.filter(c => HARD[c.id]);
+            return h("div", {class:"cell"},
+              h("button", {class:"tile "+L.cls, onclick:()=>startDeck(i)},
+                h("div", {class:"tag"}, "Mazo "+(i+1)),
+                h("div", {class:"name"}, d[0].w+" …"),
+                h("div", {class:"meta"}, d.length+" palabras"+(n ? " · "+n+" vistas" : "")),
+                pct !== null
+                  ? h("div", {class:"pwrap", title:"Último intento: "+r.score+" de "+r.total},
+                      h("div", {class:"pbar"+(pct === 100 ? " full" : "")}, h("i", {style:"width:"+pct+"%"})),
+                      h("div", {class:"ptxt"}, pct+"%"))
+                  : null),
+              hd.length ? h("button", {class:"chip", onclick:()=>startHard(hd, S.lang, back)}, "★ Repasar difíciles ("+hd.length+")") : null);
+          }),
+          (() => {
+            const all = cards.filter(c => HARD[c.id]);
+            return all.length
+              ? h("div", {class:"cell"}, h("button", {class:"tile hardtile", onclick:()=>startHard(all, S.lang, back)},
+                  h("div", {class:"big"}, "★"), h("div", {class:"name"}, "Repasar difíciles"),
+                  h("div", {class:"meta"}, "de todos los mazos · "+all.length)))
+              : h("div", {class:"cell"}, h("div", {class:"tile dashed"},
+                  h("div", {class:"big"}, "☆"), h("div", {class:"name"}, "Difíciles"),
+                  h("div", {class:"meta"}, "Marca palabras con ★ mientras estudias")));
+          })())
       : h("div", {class:"empty"}, "Este video todavía no tiene vocabulario.")
   );
 }
@@ -569,6 +623,12 @@ function startDeck(di){
         sess: newSess("deck", deck, cards, {view:"video", lang:S.lang, ci:S.ci, vi:S.vi}) };
   render(); window.scrollTo(0,0);
 }
+function startHard(cards, langKey, back){
+  const se = newSess("hard", shuffle(cards), allCards(langKey), back);
+  se.src = cards;
+  S = { view:"quiz", lang:langKey, sess: se };
+  render(); window.scrollTo(0,0);
+}
 function startReview(cards, langKey, back){
   S = { view:"quiz", lang:langKey, sess: newSess("review", cards, allCards(langKey), back) };
   render(); window.scrollTo(0,0);
@@ -576,6 +636,7 @@ function startReview(cards, langKey, back){
 
 /* Aplica el resultado al SRS */
 function srsApply(card, ok, mode){
+  if (mode === "hard") return;            // práctica de difíciles: no mueve el calendario SRS
   if (mode === "review") grade(card.id, ok);
   else {                                  // en mazos: solo si es nueva, está vencida o fallaste
     const s = SRS[card.id];
@@ -592,11 +653,11 @@ function quiz(){
     se.options = shuffle([card.es, ...wrong]);
   }
   const revealed = se.answered || se.peeked;
-  const label = se.mode === "review" ? "Repaso" : "Mazo "+(S.di+1);
+  const label = se.mode === "review" ? "Repaso" : se.mode === "hard" ? "★ Difíciles" : "Mazo "+(S.di+1);
 
   function fail(){
     if (!se.seen[card.id]){ srsApply(card, false, se.mode); se.seen[card.id] = true;
-      se.msg = "Volverá a aparecer en 10 min."; }
+      se.msg = se.mode === "hard" ? "" : "Volverá a aparecer en 10 min."; }
     else se.msg = "";
     se.res = "bad";
   }
@@ -648,7 +709,10 @@ function quiz(){
     h("div", {class:"progress"}, h("i", {style:"width:"+(se.done/se.total*100)+"%"})),
     h("div", {class:"count"}, h("span", {}, (se.done+1 > se.total ? se.total : se.done+1)+" de "+se.total+(se.queue.length>se.total-se.done?"":"")),
                                h("span", {}, "Aciertos: "+se.score)),
-    h("div", {class:"qcard"}, wordEl, reveal),
+    h("div", {class:"qcard"},
+      h("button", {class:"star"+(HARD[card.id] ? " on" : ""), type:"button", "aria-pressed": HARD[card.id] ? "true" : "false",
+        onclick: e => { e.stopPropagation(); toggleHard(card.id); }}, HARD[card.id] ? "★ Difícil" : "☆ Marcar difícil"),
+      wordEl, reveal),
     opts,
     se.res === "ok" ? h("div", {class:"status ok"}, "¡Correcto! ", h("span", {class:"srsmsg"}, se.msg)) : null,
     se.res === "bad"
@@ -728,6 +792,13 @@ function srsHome(){
         h("span", {}, h("b", {}, L.name), ": ", (due.length ? due.length+" pendiente(s)" : "nada pendiente")+" · "+ls.studied+" estudiadas"+(ls.waiting ? " · "+waitTxt(ls) : "")),
         due.length ? h("button", {class:"btn small", onclick:()=>startReview(due.slice(0,SESSION_MAX), lk, {view:"srsHome"})}, "Repasar") : null);
     }),
+    Object.entries(DATA).map(([lk, L]) => {
+      const hd = allCards(lk).filter(c => HARD[c.id]);
+      if (!hd.length) return null;
+      return h("div", {class:"srsbar"},
+        h("span", {}, h("b", {}, "★ Difíciles"), " ("+L.name+"): "+hd.length+" palabra(s)"),
+        h("button", {class:"btn small", onclick:()=>startHard(hd, lk, {view:"srsHome"})}, "Repasar"));
+    }),
     st.studied === 0 ? h("div", {class:"empty"}, "Aún no hay palabras en el SRS. Completa un mazo y aparecerán aquí.") : null,
     h("button", {class:"btn ghost danger", onclick: async () => {
       if (!confirm("¿Borrar todo tu progreso del SRS? No se puede deshacer.")) return;
@@ -741,6 +812,17 @@ function srsHome(){
 }
 function reviewEnd(){
   const se = S.sess;
+  if (se.mode === "hard"){
+    const again = se.src.filter(c => HARD[c.id]);
+    put(
+      crumbs(["★ Difíciles terminado"]),
+      h("div", {class:"result"},
+        h("div", {class:"score"}, se.score+" / "+se.total),
+        h("p", {class:"sub"}, "Acertadas a la primera. Quita la ★ de las que ya dominas."),
+        again.length ? h("button", {class:"btn", onclick:()=>startHard(again, S.lang, se.back)}, "Repetir difíciles ("+again.length+")") : null,
+        h("button", {class:"btn ghost", onclick:()=>go(se.back)}, "Volver")));
+    return;
+  }
   const st = stats(S.lang);
   const nextTxt = st.next === Infinity ? null : "Próxima palabra pendiente en " + fmtIn(st.next - now()) + ".";
   put(
@@ -763,7 +845,7 @@ function reviewEnd(){
     else go({view:"login"});
   } catch(e){ go({view:"login"}); }
   sb.auth.onAuthStateChange(ev => {
-    if (ev === "SIGNED_OUT"){ USER = null; SRS = {}; dirty = {}; DECKS = {}; dirtyDecks = {}; go({view:"login"}); }
+    if (ev === "SIGNED_OUT"){ USER = null; SRS = {}; dirty = {}; DECKS = {}; dirtyDecks = {}; HARD = {}; dirtyHard = {}; go({view:"login"}); }
   });
 })();
 </script>
